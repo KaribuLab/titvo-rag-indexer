@@ -1,0 +1,14 @@
+.venv/
+.git/
+.gitignore
+.python-version
+.ruff_cache/
+__pycache__/
+.env*
+aws/
+tests/
+README.md
+ruff.toml
+serverless.hcl
+terragrunt.hcl
+.terragrunt-cache/

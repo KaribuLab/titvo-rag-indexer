@@ -1,0 +1,74 @@
+@ragIndexerUrl = http://localhost:3002
+@networkMode = {{$dotenv DOCKER_NETWORK_MODE}}
+
+@repoUrl = {{$dotenv TITVO_REPO_URL}}
+@branch = {{$dotenv TITVO_BRANCH}}
+@commitSha = {{$dotenv TITVO_COMMIT_SHA}}
+@configTableName = {{$dotenv TITVO_DYNAMO_CONFIGURATION_TABLE_NAME}}
+@encryptionKeyName = {{$dotenv TITVO_ENCRYPTION_KEY_NAME}}
+
+# Run rag-indexer
+# @name runRagIndexerFull
+
+POST {{ragIndexerUrl}}/run-batch
+Content-Type: application/json
+
+{
+  "containerName": "titvo-rag-indexer",
+  "imageName": "titvo/rag-indexer",
+  "networkMode": "{{networkMode}}",
+  "environmentVariables": [
+    "TITVO_REPO_URL={{repoUrl}}",
+    "TITVO_BRANCH={{branch}}",
+    "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME={{configTableName}}",
+    "TITVO_ENCRYPTION_KEY_NAME={{encryptionKeyName}}"
+  ]
+}
+
+###
+
+# Get job status
+# @name getJobStatusFull
+
+@jobIdFull = {{runRagIndexerFull.response.body.jobId}}
+
+POST {{ragIndexerUrl}}/get-job-status
+Content-Type: application/json
+
+{
+  "jobId": "{{jobIdFull}}"
+}
+
+###
+
+# Run rag-indexer delta
+# @name runRagIndexerDelta
+
+POST {{ragIndexerUrl}}/run-batch
+Content-Type: application/json
+
+{
+  "containerName": "titvo-rag-indexer",
+  "imageName": "titvo/rag-indexer",
+  "networkMode": "{{networkMode}}",
+  "environmentVariables": [
+    "TITVO_REPO_URL={{repoUrl}}",
+    "TITVO_COMMIT_SHA={{commitSha}}",
+    "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME={{configTableName}}",
+    "TITVO_ENCRYPTION_KEY_NAME={{encryptionKeyName}}"
+  ]
+}
+
+###
+
+# Get job status delta
+# @name getJobStatusDelta
+
+@jobIdDelta = {{runRagIndexerDelta.response.body.jobId}}
+
+POST {{ragIndexerUrl}}/get-job-status
+Content-Type: application/json
+
+{
+  "jobId": "{{jobIdDelta}}"
+}
