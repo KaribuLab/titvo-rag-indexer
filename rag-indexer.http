@@ -41,7 +41,7 @@ Content-Type: application/json
 
 ###
 
-# Run rag-indexer delta
+# Run rag-indexer delta (REQUIERE TITVO_BRANCH + TITVO_COMMIT_SHA)
 # @name runRagIndexerDelta
 
 POST {{ragIndexerUrl}}/run-batch
@@ -53,6 +53,7 @@ Content-Type: application/json
   "networkMode": "{{networkMode}}",
   "environmentVariables": [
     "TITVO_REPO_URL={{repoUrl}}",
+    "TITVO_BRANCH={{branch}}",
     "TITVO_COMMIT_SHA={{commitSha}}",
     "TITVO_DYNAMO_CONFIGURATION_TABLE_NAME={{configTableName}}",
     "TITVO_ENCRYPTION_KEY_NAME={{encryptionKeyName}}"
