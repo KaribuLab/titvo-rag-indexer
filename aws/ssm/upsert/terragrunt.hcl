@@ -41,7 +41,7 @@ inputs = {
       type        = "String"
       tier        = "Standard"
       description = "RAG Indexer Batch Job Definition ARN"
-      value       = dependency.batch.outputs.job_definition_arn
+      value       = join(":", slice(split(":", dependency.batch.outputs.job_definition_arn), 0, length(split(":", dependency.batch.outputs.job_definition_arn)) - 1))
     },
     {
       path        = "batch/rag-indexer/job_definition_name"
