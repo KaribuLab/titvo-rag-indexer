@@ -36,8 +36,8 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/dynamo/parameter-table-arn"   = "arn:aws:dynamodb:us-east-1:000000000000:table/tvo-configuration-table-prod"
       "/tvo/security-scan/prod/infra/kms/encryption-key-name"      = "/tvo/security-scan/prod/infra/encryption-key"
       "/tvo/security-scan/prod/infra/secret/manager/arn"           = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/prod"
-      "/tvo/security-scan/test/infra/s3/rag-code/bucket_arn"       = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
-      "/tvo/security-scan/prod/infra/s3/rag-code/bucket_arn"       = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
+      "/tvo/security-scan/test/infra/s3/rag-index/bucket_arn"       = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
+      "/tvo/security-scan/prod/infra/s3/rag-index/bucket_arn"      = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
     }
   }
 }
@@ -96,8 +96,8 @@ inputs = {
           "s3:ListBucket"
         ],
         "Resource" : [
-          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"],
-          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-code/bucket_arn"]}/*"
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"]}/*"
         ]
       }
     ]
