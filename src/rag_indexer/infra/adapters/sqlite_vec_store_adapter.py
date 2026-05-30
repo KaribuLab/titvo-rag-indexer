@@ -33,7 +33,10 @@ class SqliteVecStoreAdapter(IVectorStorePort):
     def _ensure_db(self) -> None:
         """Ensure the database exists and has the required schema."""
         # Create directory if needed
-        os.makedirs(os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".", exist_ok=True)
+        os.makedirs(
+            os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".",
+            exist_ok=True,
+        )
 
         conn = sqlite3.connect(self.db_path)
         conn.enable_load_extension(True)
@@ -61,7 +64,9 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         conn.enable_load_extension(False)
         return conn
 
-    def store(self, repository_url: str, commit_sha: str, documents: list[dict[str, Any]]) -> None:
+    def store(
+        self, repository_url: str, commit_sha: str, documents: list[dict[str, Any]]
+    ) -> None:
         """Store documents with their embeddings."""
         if not documents:
             LOGGER.info("No documents to store")
@@ -80,7 +85,12 @@ class SqliteVecStoreAdapter(IVectorStorePort):
                 INSERT INTO chunks (id, file_path, chunk_text, embedding)
                 VALUES (?, ?, ?, ?)
                 """,
-                (doc_id, doc["file_path"], doc["text"], sqlite_vec.serialize_float32(embedding)),
+                (
+                    doc_id,
+                    doc["file_path"],
+                    doc["text"],
+                    sqlite_vec.serialize_float32(embedding),
+                ),
             )
 
         conn.commit()
@@ -96,7 +106,9 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         cursor = conn.cursor()
 
         placeholders = ",".join("?" for _ in file_paths)
-        cursor.execute(f"DELETE FROM chunks WHERE file_path IN ({placeholders})", file_paths)
+        cursor.execute(
+            f"DELETE FROM chunks WHERE file_path IN ({placeholders})", file_paths
+        )
 
         deleted = cursor.rowcount
         conn.commit()
@@ -123,12 +135,14 @@ class SqliteVecStoreAdapter(IVectorStorePort):
 
         results = []
         for row in cursor.fetchall():
-            results.append({
-                "id": row[0],
-                "file_path": row[1],
-                "chunk_text": row[2],
-                "distance": row[3],
-            })
+            results.append(
+                {
+                    "id": row[0],
+                    "file_path": row[1],
+                    "chunk_text": row[2],
+                    "distance": row[3],
+                }
+            )
 
         conn.close()
         LOGGER.debug("Search returned %d results", len(results))

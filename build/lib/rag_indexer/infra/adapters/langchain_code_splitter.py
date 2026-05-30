@@ -8,6 +8,7 @@ from rag_indexer.domain.ports.code_splitter_port import ICodeSplitter
 
 LOGGER = logging.getLogger(__name__)
 
+
 def _get_extension_to_language() -> dict[str, Language]:
     """Build extension mapping only for available languages."""
     mapping: dict[str, Language] = {}
@@ -54,17 +55,60 @@ def _get_extension_to_language() -> dict[str, Language]:
 _EXTENSION_TO_LANGUAGE = _get_extension_to_language()
 
 _EXCLUDED_EXTENSIONS = {
-    ".exe", ".dll", ".so", ".dylib", ".bin", ".o", ".a",
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico", ".webp",
-    ".mp4", ".mov", ".avi", ".mkv", ".mp3", ".wav", ".flac",
-    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar", ".xz",
-    ".db", ".sqlite", ".sqlite3", ".mdb", ".accdb",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".bin",
+    ".o",
+    ".a",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".svg",
+    ".ico",
+    ".webp",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".mp3",
+    ".wav",
+    ".flac",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".7z",
+    ".rar",
+    ".xz",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
+    ".mdb",
+    ".accdb",
+    ".pdf",
+    ".doc",
+    ".docx",
+    ".xls",
+    ".xlsx",
+    ".ppt",
+    ".pptx",
 }
 
 _EXCLUDED_DIRS = {
-    "node_modules", ".git", "__pycache__", ".venv", "venv",
-    ".tox", ".pytest_cache", ".mypy_cache", "dist", "build",
+    "node_modules",
+    ".git",
+    "__pycache__",
+    ".venv",
+    "venv",
+    ".tox",
+    ".pytest_cache",
+    ".mypy_cache",
+    "dist",
+    "build",
 }
 
 _DEFAULT_CHUNK_SIZE = 1000
@@ -72,7 +116,11 @@ _DEFAULT_CHUNK_OVERLAP = 200
 
 
 class LangChainCodeSplitter(ICodeSplitter):
-    def __init__(self, chunk_size: int = _DEFAULT_CHUNK_SIZE, chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP):
+    def __init__(
+        self,
+        chunk_size: int = _DEFAULT_CHUNK_SIZE,
+        chunk_overlap: int = _DEFAULT_CHUNK_OVERLAP,
+    ):
         self.chunk_size = chunk_size
         self.chunk_overlap = chunk_overlap
 
@@ -110,7 +158,9 @@ class LangChainCodeSplitter(ICodeSplitter):
                     chunk_overlap=self.chunk_overlap,
                 )
             except Exception as e:
-                LOGGER.warning("Failed to create language splitter for %s: %s", file_path, e)
+                LOGGER.warning(
+                    "Failed to create language splitter for %s: %s", file_path, e
+                )
                 splitter = RecursiveCharacterTextSplitter(
                     chunk_size=self.chunk_size,
                     chunk_overlap=self.chunk_overlap,

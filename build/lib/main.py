@@ -40,7 +40,9 @@ def main():
 
     LOGGER.debug(
         "Starting rag-indexer with repo=%s, commit=%s, branch=%s",
-        repo_url, commit_sha, branch,
+        repo_url,
+        commit_sha,
+        branch,
     )
 
     if repo_url is None:

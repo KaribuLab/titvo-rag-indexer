@@ -13,14 +13,42 @@ LOGGER = logging.getLogger(__name__)
 _GITHUB_API_BASE = "https://api.github.com"
 
 _EXCLUDED_EXTENSIONS = {
-    ".exe", ".dll", ".so", ".dylib", ".bin",
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".svg", ".ico",
-    ".mp4", ".mov", ".avi", ".mkv",
-    ".zip", ".tar", ".gz", ".bz2", ".7z", ".rar",
-    ".db", ".sqlite", ".sqlite3",
+    ".exe",
+    ".dll",
+    ".so",
+    ".dylib",
+    ".bin",
+    ".jpg",
+    ".jpeg",
+    ".png",
+    ".gif",
+    ".bmp",
+    ".svg",
+    ".ico",
+    ".mp4",
+    ".mov",
+    ".avi",
+    ".mkv",
+    ".zip",
+    ".tar",
+    ".gz",
+    ".bz2",
+    ".7z",
+    ".rar",
+    ".db",
+    ".sqlite",
+    ".sqlite3",
 }
 
-_EXCLUDED_DIRS = {"node_modules/", ".git/", "__pycache__/", ".venv/", "venv/", ".tox/", ".pytest_cache/"}
+_EXCLUDED_DIRS = {
+    "node_modules/",
+    ".git/",
+    "__pycache__/",
+    ".venv/",
+    "venv/",
+    ".tox/",
+    ".pytest_cache/",
+}
 
 
 class GitHubApiAdapter(IRepositoryProvider):
@@ -61,7 +89,9 @@ class GitHubApiAdapter(IRepositoryProvider):
         sha = data.get("object", {}).get("sha")
         if not sha:
             raise ValueError(f"Could not resolve branch {branch} for {url}")
-        LOGGER.debug("Resolved branch %s to SHA %s for %s/%s", branch, sha[:7], owner, repo)
+        LOGGER.debug(
+            "Resolved branch %s to SHA %s for %s/%s", branch, sha[:7], owner, repo
+        )
         return sha
 
     def _is_excluded(self, path: str) -> bool:
@@ -102,7 +132,9 @@ class GitHubApiAdapter(IRepositoryProvider):
         return files
 
     def _fetch_file_content(self, owner: str, repo: str, ref: str, path: str) -> str:
-        response = self.client.get(f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref})
+        response = self.client.get(
+            f"/repos/{owner}/{repo}/contents/{path}", params={"ref": ref}
+        )
         response.raise_for_status()
         data = response.json()
 
@@ -115,9 +147,17 @@ class GitHubApiAdapter(IRepositoryProvider):
 
     def get_changed_files(self, url: str, from_sha: str, to_sha: str) -> DiffResult:
         owner, repo = self._parse_url(url)
-        LOGGER.info("Fetching diff between %s..%s for %s/%s", from_sha[:7], to_sha[:7], owner, repo)
+        LOGGER.info(
+            "Fetching diff between %s..%s for %s/%s",
+            from_sha[:7],
+            to_sha[:7],
+            owner,
+            repo,
+        )
 
-        response = self.client.get(f"/repos/{owner}/{repo}/compare/{from_sha}...{to_sha}")
+        response = self.client.get(
+            f"/repos/{owner}/{repo}/compare/{from_sha}...{to_sha}"
+        )
         response.raise_for_status()
         data = response.json()
 
@@ -145,5 +185,10 @@ class GitHubApiAdapter(IRepositoryProvider):
                 if not self._is_excluded(filename):
                     added.append(filename)
 
-        LOGGER.info("Diff: %d added, %d modified, %d deleted", len(added), len(modified), len(deleted))
+        LOGGER.info(
+            "Diff: %d added, %d modified, %d deleted",
+            len(added),
+            len(modified),
+            len(deleted),
+        )
         return DiffResult(added=added, modified=modified, deleted=deleted)

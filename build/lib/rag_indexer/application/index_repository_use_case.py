@@ -46,19 +46,27 @@ class IndexRepositoryUseCase:
             return self._execute_delta(repository_url, branch, commit_sha)
         else:
             resolved_commit_sha = self.repository_provider.resolve_branch_sha(
-                repository_url, branch,
+                repository_url,
+                branch,
             )
             return self._execute_full(
-                repository_url, branch, resolved_commit_sha,
+                repository_url,
+                branch,
+                resolved_commit_sha,
             )
 
     def _execute_full(
-        self, repository_url: str, branch: str, commit_sha: str,
+        self,
+        repository_url: str,
+        branch: str,
+        commit_sha: str,
     ) -> IndexResultDto:
         """Execute full indexing for a commit."""
         LOGGER.info(
             "Executing full index for %s@%s (branch: %s)",
-            repository_url, commit_sha[:7], branch,
+            repository_url,
+            commit_sha[:7],
+            branch,
         )
 
         # Check idempotency
@@ -66,7 +74,8 @@ class IndexRepositoryUseCase:
         if existing_sha == commit_sha:
             LOGGER.info(
                 "Commit %s already indexed for branch %s, skipping",
-                commit_sha[:7], branch,
+                commit_sha[:7],
+                branch,
             )
             return IndexResultDto(
                 repository_url=repository_url,
@@ -95,7 +104,8 @@ class IndexRepositoryUseCase:
 
         LOGGER.info(
             "Full index complete: %d chunks from %d files",
-            chunks_indexed, len(files),
+            chunks_indexed,
+            len(files),
         )
         return IndexResultDto(
             repository_url=repository_url,
@@ -106,12 +116,17 @@ class IndexRepositoryUseCase:
         )
 
     def _execute_delta(
-        self, repository_url: str, branch: str, commit_sha: str,
+        self,
+        repository_url: str,
+        branch: str,
+        commit_sha: str,
     ) -> IndexResultDto:
         """Execute delta indexing from previous commit."""
         LOGGER.info(
             "Executing delta index for %s@%s (branch: %s)",
-            repository_url, commit_sha[:7], branch,
+            repository_url,
+            commit_sha[:7],
+            branch,
         )
 
         # Get previous commit SHA for the branch
@@ -119,16 +134,16 @@ class IndexRepositoryUseCase:
 
         if not prev_sha:
             raise ValueError(
-                f"No previous index found for branch '{branch}'. "
-                "Run full index first.",
+                f"No previous index found for branch '{branch}'. Run full index first.",
             )
 
         # Check idempotency
         if prev_sha == commit_sha:
             LOGGER.info(
-            "Commit %s already indexed as latest for branch %s, skipping",
-            commit_sha[:7], branch,
-        )
+                "Commit %s already indexed as latest for branch %s, skipping",
+                commit_sha[:7],
+                branch,
+            )
             return IndexResultDto(
                 repository_url=repository_url,
                 commit_sha=commit_sha,
@@ -148,6 +163,7 @@ class IndexRepositoryUseCase:
         # Copy to working location
         work_db_path = "/tmp/rag_index_delta.db"
         import shutil
+
         shutil.copy(temp_db_path, work_db_path)
         os.remove(temp_db_path)  # Clean up temp download
         self.db_path = work_db_path
@@ -157,13 +173,16 @@ class IndexRepositoryUseCase:
 
         # Get changed files
         diff = self.repository_provider.get_changed_files(
-            repository_url, prev_sha, commit_sha,
+            repository_url,
+            prev_sha,
+            commit_sha,
         )
 
         if not diff.added and not diff.modified and not diff.deleted:
             LOGGER.info(
                 "No changes detected between %s..%s",
-                prev_sha[:7], commit_sha[:7],
+                prev_sha[:7],
+                commit_sha[:7],
             )
             os.remove(self.db_path)  # Clean up
             return IndexResultDto(
@@ -176,7 +195,9 @@ class IndexRepositoryUseCase:
 
         LOGGER.info(
             "Delta: %d added, %d modified, %d deleted",
-            len(diff.added), len(diff.modified), len(diff.deleted),
+            len(diff.added),
+            len(diff.modified),
+            len(diff.deleted),
         )
 
         # Delete chunks for modified and deleted files
@@ -202,7 +223,8 @@ class IndexRepositoryUseCase:
 
         LOGGER.info(
             "Delta index complete: %d chunks from %d files",
-            chunks_indexed, len(files),
+            chunks_indexed,
+            len(files),
         )
         return IndexResultDto(
             repository_url=repository_url,
@@ -233,10 +255,12 @@ class IndexRepositoryUseCase:
         for file in files:
             chunks = self.code_splitter.split(file.path, file.content)
             for chunk_text in chunks:
-                documents.append({
-                    "file_path": file.path,
-                    "text": chunk_text,
-                })
+                documents.append(
+                    {
+                        "file_path": file.path,
+                        "text": chunk_text,
+                    }
+                )
             total_chunks += len(chunks)
 
         if documents:

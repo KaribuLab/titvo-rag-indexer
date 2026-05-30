@@ -44,9 +44,7 @@ class TestBitbucketApiAdapter:
         adapter = BitbucketApiAdapter(token="test-token")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "target": {"hash": "abc123def456"}
-        }
+        mock_response.json.return_value = {"target": {"hash": "abc123def456"}}
         adapter.client.get = MagicMock(return_value=mock_response)
 
         sha = adapter.resolve_branch_sha("https://bitbucket.org/workspace/repo", "main")
@@ -74,7 +72,7 @@ class TestBitbucketApiAdapter:
                 {"status": "added", "new": {"path": "src/new.py"}},
                 {"status": "modified", "new": {"path": "src/changed.py"}},
             ],
-            "next": "https://api.bitbucket.org/next-page"
+            "next": "https://api.bitbucket.org/next-page",
         }
 
         # Second page
@@ -83,15 +81,13 @@ class TestBitbucketApiAdapter:
             "values": [
                 {"status": "removed", "old": {"path": "src/deleted.py"}},
             ],
-            "next": None
+            "next": None,
         }
 
         adapter.client.get = MagicMock(side_effect=[mock_response1, mock_response2])
 
         result = adapter.get_changed_files(
-            "https://bitbucket.org/workspace/repo",
-            "abc123",
-            "def456"
+            "https://bitbucket.org/workspace/repo", "abc123", "def456"
         )
 
         assert "src/new.py" in result.added
@@ -109,14 +105,12 @@ class TestBitbucketApiAdapter:
                 {"status": "modified", "new": {"path": "node_modules/lib/index.js"}},
                 {"status": "added", "new": {"path": "image.png"}},
             ],
-            "next": None
+            "next": None,
         }
         adapter.client.get = MagicMock(return_value=mock_response)
 
         result = adapter.get_changed_files(
-            "https://bitbucket.org/workspace/repo",
-            "abc123",
-            "def456"
+            "https://bitbucket.org/workspace/repo", "abc123", "def456"
         )
 
         assert "src/main.py" in result.modified

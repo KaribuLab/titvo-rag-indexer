@@ -38,27 +38,20 @@ class TestIndexRepositoryUseCase:
                 mock_vs.return_value = mock_vs_instance
 
                 result = use_case._execute_full(
-                    "https://github.com/owner/repo",
-                    "main",
-                    "abc123def456"
+                    "https://github.com/owner/repo", "main", "abc123def456"
                 )
 
         assert result.is_delta is False
         assert result.commit_sha == "abc123def456"
         use_case.artifact_store.upload_db.assert_called_once_with(
-            "https://github.com/owner/repo",
-            "main",
-            "abc123def456",
-            "/tmp/rag_index.db"
+            "https://github.com/owner/repo", "main", "abc123def456", "/tmp/rag_index.db"
         )
 
     def test_execute_full_index_idempotency(self, use_case):
         use_case.artifact_store.get_latest_commit_sha.return_value = "abc123def456"
 
         result = use_case._execute_full(
-            "https://github.com/owner/repo",
-            "main",
-            "abc123def456"
+            "https://github.com/owner/repo", "main", "abc123def456"
         )
 
         assert result.is_delta is False
@@ -71,14 +64,11 @@ class TestIndexRepositoryUseCase:
         use_case.artifact_store.get_latest_commit_sha.return_value = None
 
         error_msg = (
-            "No previous index found for branch 'feature-branch'. "
-            "Run full index first"
+            "No previous index found for branch 'feature-branch'. Run full index first"
         )
         with pytest.raises(ValueError, match=error_msg):
             use_case._execute_delta(
-                "https://github.com/owner/repo",
-                "feature-branch",
-                "def789"
+                "https://github.com/owner/repo", "feature-branch", "def789"
             )
 
     def test_execute_delta_index_with_changes(self, use_case):
@@ -107,18 +97,13 @@ class TestIndexRepositoryUseCase:
                 mock_vs.return_value = mock_vs_instance
 
                 result = use_case._execute_delta(
-                    "https://github.com/owner/repo",
-                    "main",
-                    "def789"
+                    "https://github.com/owner/repo", "main", "def789"
                 )
 
         assert result.is_delta is True
         mock_vs_instance.delete_by_file_paths.assert_called_once()
         use_case.artifact_store.upload_db.assert_called_once_with(
-            "https://github.com/owner/repo",
-            "main",
-            "def789",
-            "/tmp/rag_index_delta.db"
+            "https://github.com/owner/repo", "main", "def789", "/tmp/rag_index_delta.db"
         )
 
     def test_execute_delta_index_no_changes(self, use_case):
@@ -133,9 +118,7 @@ class TestIndexRepositoryUseCase:
 
         with patch("shutil.copy"), patch("os.remove"):
             result = use_case._execute_delta(
-                "https://github.com/owner/repo",
-                "main",
-                "def789"
+                "https://github.com/owner/repo", "main", "def789"
             )
 
         assert result.is_delta is True
@@ -146,9 +129,7 @@ class TestIndexRepositoryUseCase:
         use_case.artifact_store.get_latest_commit_sha.return_value = "abc123"
 
         result = use_case._execute_delta(
-            "https://github.com/owner/repo",
-            "main",
-            "abc123"
+            "https://github.com/owner/repo", "main", "abc123"
         )
 
         assert result.is_delta is True
@@ -188,7 +169,7 @@ class TestIndexRepositoryUseCase:
                 result = use_case.execute(
                     "https://github.com/owner/repo",
                     branch="feature-branch",
-                    commit_sha="def789"
+                    commit_sha="def789",
                 )
 
         assert result.is_delta is True
@@ -212,29 +193,22 @@ class TestIndexRepositoryUseCase:
                 mock_vs.return_value = mock_vs_instance
 
                 result = use_case.execute(
-                    "https://github.com/owner/repo",
-                    branch="main"
+                    "https://github.com/owner/repo", branch="main"
                 )
 
         assert result.is_delta is False
         use_case.repository_provider.resolve_branch_sha.assert_called_once_with(
-            "https://github.com/owner/repo",
-            "main"
+            "https://github.com/owner/repo", "main"
         )
 
     def test_execute_without_branch_raises_error(self, use_case):
         """Execute without branch should raise ValueError."""
         with pytest.raises(ValueError, match="branch is required"):
-            use_case.execute(
-                "https://github.com/owner/repo",
-                commit_sha="abc123"
-            )
+            use_case.execute("https://github.com/owner/repo", commit_sha="abc123")
 
     def test_execute_empty_branch_raises_error(self, use_case):
         """Execute with empty branch should raise ValueError."""
         with pytest.raises(ValueError, match="branch is required"):
             use_case.execute(
-                "https://github.com/owner/repo",
-                branch="",
-                commit_sha="abc123"
+                "https://github.com/owner/repo", branch="", commit_sha="abc123"
             )

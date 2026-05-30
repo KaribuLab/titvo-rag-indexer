@@ -36,13 +36,17 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
     def _build_repo_path(self, repository_url: str) -> str:
         """Convert repository URL to S3 path."""
         # Remove protocol
-        url = re.sub(r'^https?://', '', repository_url)
+        url = re.sub(r"^https?://", "", repository_url)
         # Remove .git suffix
-        url = url.rstrip('/').replace('.git', '')
+        url = url.rstrip("/").replace(".git", "")
         return url
 
     def upload_db(
-        self, repository_url: str, branch: str, commit_sha: str, db_path: str,
+        self,
+        repository_url: str,
+        branch: str,
+        commit_sha: str,
+        db_path: str,
     ) -> None:
         bucket = self._get_bucket_name()
         repo_path = self._build_repo_path(repository_url)
@@ -71,7 +75,9 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
 
         LOGGER.info(
             "Copying to s3://%s/%s/branches/%s/latest/",
-            bucket, repo_path, branch,
+            bucket,
+            repo_path,
+            branch,
         )
         self.s3_client.copy_object(
             CopySource={"Bucket": bucket, "Key": commit_key},
@@ -86,11 +92,15 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
 
         LOGGER.info(
             "Successfully uploaded database for %s@%s (branch: %s)",
-            repository_url, commit_sha[:7], branch,
+            repository_url,
+            commit_sha[:7],
+            branch,
         )
 
     def download_latest_db(
-        self, repository_url: str, branch: str,
+        self,
+        repository_url: str,
+        branch: str,
     ) -> Optional[str]:
         bucket = self._get_bucket_name()
         repo_path = self._build_repo_path(repository_url)
@@ -110,14 +120,17 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
             if error_code == "404" or error_code == "NoSuchKey":
                 LOGGER.debug(
                     "Latest DB not found for %s (branch: %s)",
-                    repository_url, branch,
+                    repository_url,
+                    branch,
                 )
                 return None
             LOGGER.error("Error downloading DB: %s", e)
             raise
 
     def get_latest_commit_sha(
-        self, repository_url: str, branch: str,
+        self,
+        repository_url: str,
+        branch: str,
     ) -> Optional[str]:
         bucket = self._get_bucket_name()
         repo_path = self._build_repo_path(repository_url)
@@ -133,7 +146,8 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
             if error_code == "404" or error_code == "NoSuchKey":
                 LOGGER.debug(
                     "Latest meta.json not found for %s (branch: %s)",
-                    repository_url, branch,
+                    repository_url,
+                    branch,
                 )
                 return None
             LOGGER.error("Error reading meta.json: %s", e)

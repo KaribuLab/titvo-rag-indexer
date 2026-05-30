@@ -5,14 +5,20 @@ from typing import Optional
 class IArtifactStorePort(abc.ABC):
     @abc.abstractmethod
     def upload_db(
-        self, repository_url: str, branch: str, commit_sha: str, db_path: str,
+        self,
+        repository_url: str,
+        branch: str,
+        commit_sha: str,
+        db_path: str,
     ) -> None:
         """Upload database to S3 at commit path and update latest pointer."""
         pass
 
     @abc.abstractmethod
     def download_latest_db(
-        self, repository_url: str, branch: str,
+        self,
+        repository_url: str,
+        branch: str,
     ) -> Optional[str]:
         """Download latest database from S3 to local path."""
         pass

@@ -35,7 +35,9 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
         provider_lower = provider.lower()
 
         if provider_lower not in _SUPPORTED_PROVIDERS:
-            raise ValueError(f"Unsupported embedding provider: {provider}. Supported: {_SUPPORTED_PROVIDERS}")
+            raise ValueError(
+                f"Unsupported embedding provider: {provider}. Supported: {_SUPPORTED_PROVIDERS}"
+            )
 
         if provider_lower == "openai":
             LOGGER.debug("Using OpenAI embeddings with model %s", model)

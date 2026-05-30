@@ -45,15 +45,15 @@ class TestGitHubApiAdapter:
         adapter = GitHubApiAdapter(token="test-token")
 
         mock_response = MagicMock()
-        mock_response.json.return_value = {
-            "object": {"sha": "abc123def456"}
-        }
+        mock_response.json.return_value = {"object": {"sha": "abc123def456"}}
         adapter.client.get = MagicMock(return_value=mock_response)
 
         sha = adapter.resolve_branch_sha("https://github.com/owner/repo", "main")
 
         assert sha == "abc123def456"
-        adapter.client.get.assert_called_once_with("/repos/owner/repo/git/ref/heads/main")
+        adapter.client.get.assert_called_once_with(
+            "/repos/owner/repo/git/ref/heads/main"
+        )
 
     def test_is_excluded(self):
         adapter = GitHubApiAdapter(token="test-token")
@@ -72,15 +72,17 @@ class TestGitHubApiAdapter:
                 {"filename": "src/new.py", "status": "added"},
                 {"filename": "src/changed.py", "status": "modified"},
                 {"filename": "src/deleted.py", "status": "removed"},
-                {"filename": "src/old.py", "previous_filename": "src/renamed.py", "status": "renamed"},
+                {
+                    "filename": "src/old.py",
+                    "previous_filename": "src/renamed.py",
+                    "status": "renamed",
+                },
             ]
         }
         adapter.client.get = MagicMock(return_value=mock_response)
 
         result = adapter.get_changed_files(
-            "https://github.com/owner/repo",
-            "abc123",
-            "def456"
+            "https://github.com/owner/repo", "abc123", "def456"
         )
 
         assert "src/new.py" in result.added
@@ -103,9 +105,7 @@ class TestGitHubApiAdapter:
         adapter.client.get = MagicMock(return_value=mock_response)
 
         result = adapter.get_changed_files(
-            "https://github.com/owner/repo",
-            "abc123",
-            "def456"
+            "https://github.com/owner/repo", "abc123", "def456"
         )
 
         assert "src/main.py" in result.modified
@@ -119,7 +119,7 @@ class TestGitHubApiAdapter:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "content": encoded_content,
-            "encoding": "base64"
+            "encoding": "base64",
         }
         adapter.client.get = MagicMock(return_value=mock_response)
 
@@ -133,7 +133,7 @@ class TestGitHubApiAdapter:
         mock_response = MagicMock()
         mock_response.json.return_value = {
             "content": "plain text content",
-            "encoding": None
+            "encoding": None,
         }
         adapter.client.get = MagicMock(return_value=mock_response)
 
