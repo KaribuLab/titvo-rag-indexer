@@ -11,7 +11,7 @@ locals {
       name = "Production"
     }
   }
-  provider_version = "6.7.0"
+  provider_version = "6.46.0"
   parameter_path   = "/tvo/security-scan"
   service_name     = "tvo-rag-indexer"
   service_bucket   = "${local.service_name}-${local.region}${local.bucket_suffix}"
