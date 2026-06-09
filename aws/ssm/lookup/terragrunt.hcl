@@ -1,5 +1,5 @@
 terraform {
-  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-lookup.git?ref=v0.7.8"
+  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-lookup.git?ref=v0.1.0"
   extra_arguments "disable_backend" {
     commands  = ["init"]
     arguments = ["-backend=false"]
