@@ -1,5 +1,5 @@
 terraform {
-  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-upsert.git?ref=v0.7.8"
+  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-upsert.git?ref=v0.7.9"
 }
 
 locals {
