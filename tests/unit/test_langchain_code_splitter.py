@@ -1,5 +1,3 @@
-import pytest
-
 from rag_indexer.infra.adapters.langchain_code_splitter import LangChainCodeSplitter
 
 

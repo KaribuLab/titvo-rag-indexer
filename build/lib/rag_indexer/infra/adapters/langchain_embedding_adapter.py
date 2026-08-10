@@ -1,5 +1,4 @@
 import logging
-from typing import Any
 
 from langchain.embeddings.base import Embeddings
 from langchain_openai import OpenAIEmbeddings
@@ -36,7 +35,8 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
 
         if provider_lower not in _SUPPORTED_PROVIDERS:
             raise ValueError(
-                f"Unsupported embedding provider: {provider}. Supported: {_SUPPORTED_PROVIDERS}"
+                f"Unsupported embedding provider: {provider}. "
+                f"Supported: {_SUPPORTED_PROVIDERS}"
             )
 
         if provider_lower == "openai":
