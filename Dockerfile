@@ -8,6 +8,10 @@ RUN uv sync --frozen --no-dev
 
 FROM python:3.13-slim-bookworm
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends git openssh-client \
+    && rm -rf /var/lib/apt/lists/*
+
 COPY --from=builder /app/.venv/lib/python3.13/site-packages /usr/local/lib/python3.13/site-packages
 COPY --from=builder /app/src /app
 

@@ -19,3 +19,8 @@ class IRepositoryProvider(abc.ABC):
     def get_changed_files(self, url: str, from_sha: str, to_sha: str) -> DiffResult:
         """Get list of changed files between two commits."""
         pass
+
+    @abc.abstractmethod
+    def close(self) -> None:
+        """Release repository data and credentials held by the provider."""
+        pass

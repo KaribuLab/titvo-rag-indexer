@@ -33,7 +33,7 @@ class IndexRepositoryUseCase:
     def execute(
         self,
         repository_url: str,
-        branch: str,
+        branch: str = "",
         commit_sha: Optional[str] = None,
     ) -> IndexResultDto:
         LOGGER.info("Starting indexing for repository: %s", repository_url)

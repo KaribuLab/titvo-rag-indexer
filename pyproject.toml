@@ -7,7 +7,6 @@ requires-python = ">=3.13"
 dependencies = [
     "boto3>=1.40.59",
     "dynamodb-json>=1.4.2",
-    "httpx>=0.28.0",
     "langchain>=0.3.0",
     "langchain-community>=0.3.0",
     "langchain-openai>=0.3.0",
@@ -18,5 +17,9 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "pytest>=8.0.0",
     "ruff>=0.14.2",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]

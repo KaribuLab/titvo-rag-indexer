@@ -74,62 +74,45 @@ def main():
         ),
     )
 
-    # Get tokens for repository providers
-    github_token = configuration_provider.get_secret("github_access_token")
-    bitbucket_token = configuration_provider.get_secret("bitbucket_api_token")
-
-    if not github_token:
-        LOGGER.warning("github_access_token not found in configuration")
-    if not bitbucket_token:
-        LOGGER.warning("bitbucket_api_token not found in configuration")
-
-    # Create repository provider based on URL
     repository_provider = create_repository_provider(
         url=repo_url,
-        github_token=github_token or "",
-        bitbucket_token=bitbucket_token or "",
-    )
-
-    # Create code splitter
-    chunk_size = int(os.getenv("TITVO_CHUNK_SIZE", "1000"))
-    chunk_overlap = int(os.getenv("TITVO_CHUNK_OVERLAP", "200"))
-    code_splitter = LangChainCodeSplitter(
-        chunk_size=chunk_size,
-        chunk_overlap=chunk_overlap,
-    )
-
-    # Create embedding provider
-    embedding_provider = LangChainEmbeddingAdapter(configuration_provider)
-
-    # Create artifact store
-    artifact_store = S3ArtifactStoreAdapter(
-        s3_client=create_boto3_client("s3"),
         configuration_provider=configuration_provider,
     )
+    try:
+        chunk_size = int(os.getenv("TITVO_CHUNK_SIZE", "1000"))
+        chunk_overlap = int(os.getenv("TITVO_CHUNK_OVERLAP", "200"))
+        code_splitter = LangChainCodeSplitter(
+            chunk_size=chunk_size,
+            chunk_overlap=chunk_overlap,
+        )
+        embedding_provider = LangChainEmbeddingAdapter(configuration_provider)
+        artifact_store = S3ArtifactStoreAdapter(
+            s3_client=create_boto3_client("s3"),
+            configuration_provider=configuration_provider,
+        )
+        use_case = IndexRepositoryUseCase(
+            repository_provider=repository_provider,
+            code_splitter=code_splitter,
+            embedding_provider=embedding_provider,
+            artifact_store=artifact_store,
+        )
+        result = use_case.execute(
+            repository_url=repo_url,
+            branch=branch,
+            commit_sha=commit_sha,
+        )
 
-    # Create use case
-    use_case = IndexRepositoryUseCase(
-        repository_provider=repository_provider,
-        code_splitter=code_splitter,
-        embedding_provider=embedding_provider,
-        artifact_store=artifact_store,
-    )
-
-    # Execute
-    result = use_case.execute(
-        repository_url=repo_url,
-        branch=branch,
-        commit_sha=commit_sha,
-    )
-
-    LOGGER.info(
-        "Indexing complete: repo=%s, commit=%s, is_delta=%s, chunks=%d, files=%d",
-        result.repository_url,
-        result.commit_sha[:7],
-        result.is_delta,
-        result.chunks_indexed,
-        result.files_processed,
-    )
+        LOGGER.info(
+            "Indexing complete: repo=%s, commit=%s, is_delta=%s, "
+            "chunks=%d, files=%d",
+            result.repository_url,
+            result.commit_sha[:7],
+            result.is_delta,
+            result.chunks_indexed,
+            result.files_processed,
+        )
+    finally:
+        repository_provider.close()
 
 
 if __name__ == "__main__":

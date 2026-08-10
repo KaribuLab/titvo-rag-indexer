@@ -1,26 +1,32 @@
 import logging
 
 from rag_indexer.domain.ports.repository_provider import IRepositoryProvider
-from rag_indexer.infra.adapters.bitbucket_api_adapter import BitbucketApiAdapter
-from rag_indexer.infra.adapters.github_api_adapter import GitHubApiAdapter
+from rag_indexer.infra.adapters.ssh_git_repository_adapter import (
+    GitRunner,
+    SshGitRepositoryAdapter,
+    parse_repository_url,
+)
+from shared.domain.ports.configuration_provider import IConfigurationProvider
 
 LOGGER = logging.getLogger(__name__)
 
-_GITHUB_HOST = "github.com"
-_BITBUCKET_HOST = "bitbucket.org"
-
 
 def create_repository_provider(
-    url: str, github_token: str, bitbucket_token: str
+    url: str,
+    configuration_provider: IConfigurationProvider,
+    runner: GitRunner | None = None,
 ) -> IRepositoryProvider:
-    """Create the appropriate repository provider based on URL."""
-    if _GITHUB_HOST in url:
-        LOGGER.debug("Using GitHub API adapter for %s", url)
-        return GitHubApiAdapter(token=github_token)
-    elif _BITBUCKET_HOST in url:
-        LOGGER.debug("Using Bitbucket API adapter for %s", url)
-        return BitbucketApiAdapter(token=bitbucket_token)
-    else:
+    """Create an SSH repository provider and load only its host credential."""
+    location = parse_repository_url(url)
+    private_key = configuration_provider.get_secret(location.secret_name)
+    if not private_key:
         raise ValueError(
-            f"Unsupported repository provider for URL: {url}. Only GitHub and Bitbucket are supported."
+            f"SSH private key not found in configuration: {location.secret_name}"
         )
+
+    LOGGER.debug("Using Git SSH adapter for %s", location.host)
+    return SshGitRepositoryAdapter(
+        clone_url=location.clone_url,
+        private_key=private_key,
+        runner=runner,
+    )
