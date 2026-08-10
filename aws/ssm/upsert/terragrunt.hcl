@@ -1,5 +1,5 @@
 terraform {
-  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-upsert.git?ref=v0.7.11"
+  source = "git::https://github.com/KaribuLab/terraform-aws-parameter-upsert.git?ref=v0.7.12"
 }
 
 locals {
@@ -33,7 +33,7 @@ include {
 
 inputs = {
   base_path      = local.base_path
-  binary_version = "v0.7.6"
+  binary_version = "v0.7.12"
   tags           = local.common_tags
   parameters = [
     {
