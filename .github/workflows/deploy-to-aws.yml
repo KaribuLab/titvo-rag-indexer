@@ -1,0 +1,83 @@
+name: Deploy to AWS with Terragrunt
+
+on:
+  push:
+    branches: [main]
+
+env:
+  AWS_REGION: us-east-2
+  AWS_STAGE: prod
+  ECR_REPOSITORY: tvo-rag-indexer-ecr-prod
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_TITVO_BATCH_ROLE_TO_ASSUME }}
+          aws-region: us-east-2
+
+      - name: Apply ECR
+        uses: gruntwork-io/terragrunt-action@v2
+        with:
+          tf_version: "1.9.8"
+          tg_version: "0.69.1"
+          tg_dir: "aws/ecr"
+          tg_command: "apply --terragrunt-non-interactive -auto-approve"
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_TITVO_ACCOUNT_ID }}
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Batch image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          image_uri="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker build --tag "$image_uri" .
+
+      - name: Push Batch image
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+          image_uri="${ECR_REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+          docker push "$image_uri"
+          # terraform-aws-batch registra la job definition con ${repo}:latest
+          docker tag "$image_uri" "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+          docker push "${ECR_REGISTRY}/${ECR_REPOSITORY}:latest"
+
+      - name: Apply Terragrunt
+        uses: gruntwork-io/terragrunt-action@v2
+        with:
+          tf_version: "1.9.8"
+          tg_version: "0.69.1"
+          tg_dir: "aws"
+          tg_command: "run-all apply --terragrunt-non-interactive -auto-approve"
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_TITVO_ACCOUNT_ID }}
