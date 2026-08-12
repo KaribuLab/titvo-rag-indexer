@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path, PurePosixPath
-from typing import Protocol
+from typing import Optional, Protocol, Set
 from urllib.parse import urlsplit
 
 from rag_indexer.domain.dto.diff_result_dto import DiffResult
@@ -222,7 +222,12 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
                 return sha.lower()
         raise ValueError(f"Could not resolve branch {branch} for {self.clone_url}")
 
-    def get_files(self, url: str, commit_sha: str) -> list[FileContent]:
+    def get_files(
+        self,
+        url: str,
+        commit_sha: str,
+        exclude_paths: Optional[Set[str]] = None,
+    ) -> list[FileContent]:
         del url
         self._fetch_commit(commit_sha)
         assert self._repo_dir is not None
@@ -232,6 +237,7 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
             cwd=str(self._repo_dir),
         )
         files: list[FileContent] = []
+        skipped_excluded = 0
         for entry in tree.split(b"\0"):
             if not entry:
                 continue
@@ -244,6 +250,9 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
 
             path = encoded_path.decode("utf-8", errors="surrogateescape")
             if self._is_excluded(path):
+                continue
+            if exclude_paths and path in exclude_paths:
+                skipped_excluded += 1
                 continue
 
             object_id = fields[2].decode("ascii")
@@ -260,7 +269,15 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
                 continue
             files.append(FileContent(path=path, content=content))
 
-        LOGGER.info("Fetched %d files from %s", len(files), self.clone_url)
+        if exclude_paths:
+            LOGGER.info(
+                "Fetched %d files from %s (skipped %d via exclude_paths)",
+                len(files),
+                self.clone_url,
+                skipped_excluded,
+            )
+        else:
+            LOGGER.info("Fetched %d files from %s", len(files), self.clone_url)
         return files
 
     def get_changed_files(self, url: str, from_sha: str, to_sha: str) -> DiffResult:
@@ -308,6 +325,45 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
                 modified.append(path)
 
         return DiffResult(added=added, modified=modified, deleted=deleted)
+
+    def restore_from_snapshot(
+        self,
+        snapshot_path: str,
+        commit_sha: str,
+    ) -> None:
+        """Move the extracted .git snapshot into a fresh mkdtemp repo dir.
+
+        The snapshot_path is expected to be a directory containing a .git subdir
+        (as returned by S3ArtifactStoreAdapter.download_source_snapshot)."""
+        snapshot_path_obj = Path(snapshot_path)
+        git_dir = (
+            snapshot_path_obj / ".git"
+            if (snapshot_path_obj / ".git").is_dir()
+            else snapshot_path_obj
+        )
+        if not git_dir.is_dir():
+            raise ValueError(
+                f"Snapshot path does not contain a .git directory: {snapshot_path}"
+            )
+
+        # Wipe any prior local repo
+        if self._repo_dir is not None:
+            shutil.rmtree(self._repo_dir, ignore_errors=True)
+            self._repo_dir = None
+
+        new_dir = Path(tempfile.mkdtemp(prefix="rag-git-repo-"))
+        shutil.move(str(git_dir), str(new_dir / ".git"))
+        self._repo_dir = new_dir
+        # Mark the commit as already fetched so get_files() does not call git fetch.
+        normalized = commit_sha.lower()
+        if _SHA_PATTERN.fullmatch(normalized):
+            self._fetched_commits.add(normalized)
+        LOGGER.info("Restored local repo from %s at %s", snapshot_path, self._repo_dir)
+
+    def get_repo_dir(self) -> Path:
+        if self._repo_dir is None:
+            return self._ensure_repository()
+        return self._repo_dir
 
     def close(self) -> None:
         if self._repo_dir is not None:

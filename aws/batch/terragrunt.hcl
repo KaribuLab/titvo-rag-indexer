@@ -47,9 +47,14 @@ inputs = {
   name               = local.batch_name
   common_tags        = local.common_tags
   ecr_repository_url = dependency.ecr.outputs.ecr_repository_url
-  max_vcpus          = 4
-  job_vcpu           = 1
-  job_memory         = 2048
+  # Capacity bump per change `add-rag-indexer-resume-checkpointing` (design.md D6):
+  # - job_vcpu 1 -> 2: parallelize AST splitting + insertions
+  # - job_memory 2048 -> 4096: headroom for tracking table + streaming buffers
+  # - max_vcpus 4 -> 8: 4 jobs concurrent given job_vcpu=2
+  # Fargate constraint: 2 vCPU requires 4-16 GB in 1 GB increments (4096 MB is valid).
+  max_vcpus          = 8
+  job_vcpu           = 2
+  job_memory         = 4096
   job_command        = ["python", "main.py"]
   vpc_id             = dependency.parameters.outputs.parameters["${local.base_path}/infra/vpc/vpc_id"]
   job_environment = [
@@ -93,7 +98,8 @@ inputs = {
           "s3:GetObject",
           "s3:PutObject",
           "s3:CopyObject",
-          "s3:ListBucket"
+          "s3:ListBucket",
+          "s3:DeleteObject"
         ],
         "Resource" : [
           dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"],

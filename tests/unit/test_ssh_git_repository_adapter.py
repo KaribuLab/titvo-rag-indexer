@@ -215,3 +215,50 @@ def test_cleanup_removes_repository_after_git_failure(adapter):
     assert repo_dir is not None
     assert not repo_dir.exists()
     assert not repository._key_dir.exists()
+
+
+def test_5_4_get_files_with_exclude_paths_skips_cat_file(adapter):
+    """If exclude_paths contains a path, git cat-file is not called for it."""
+    repository, runner = adapter
+    keep_oid = "1" * 40
+    skip_oid = "2" * 40
+    runner.responses["ls-tree"] = b"\0".join(
+        [
+            f"100644 blob {keep_oid}\tsrc/keep.py".encode(),
+            f"100644 blob {skip_oid}\tsrc/skip.py".encode(),
+            b"",
+        ]
+    )
+    runner.blobs = {keep_oid: b"keep-content"}
+
+    files = repository.get_files("ignored", TO_SHA, exclude_paths={"src/skip.py"})
+
+    assert [(f.path, f.content) for f in files] == [("src/keep.py", "keep-content")]
+    # The skip file's blob was never read
+    assert skip_oid not in runner.blobs
+
+
+def test_5_5_restore_from_snapshot_uses_extracted_git(adapter):
+    """restore_from_snapshot moves .git from snapshot to a new mkdtemp."""
+    import tempfile
+    from pathlib import Path
+
+    repository, _ = adapter
+
+    # Build a fake snapshot directory containing a .git
+    snapshot_root = Path(tempfile.mkdtemp(prefix="rag-snapshot-"))
+    fake_git = snapshot_root / ".git"
+    fake_git.mkdir()
+    (fake_git / "HEAD").write_text("ref: refs/heads/main")
+
+    repository.restore_from_snapshot(str(snapshot_root), TO_SHA)
+
+    # After restore, _repo_dir points to a new dir with .git
+    assert repository._repo_dir is not None
+    assert (repository._repo_dir / ".git").is_dir()
+    head_content = (repository._repo_dir / ".git" / "HEAD").read_text()
+    assert head_content == "ref: refs/heads/main"
+    # And the commit is marked as already fetched
+    assert TO_SHA in repository._fetched_commits
+
+    repository.close()

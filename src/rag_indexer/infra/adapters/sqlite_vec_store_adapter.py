@@ -2,7 +2,7 @@ import logging
 import os
 import sqlite3
 import uuid
-from typing import Any, Optional
+from typing import Any, Optional, Set
 
 import sqlite_vec
 
@@ -31,7 +31,6 @@ class SqliteVecStoreAdapter(IVectorStorePort):
 
     def _ensure_db(self) -> None:
         """Ensure the database exists and has the required schema."""
-        # Create directory if needed
         os.makedirs(
             os.path.dirname(self.db_path) if os.path.dirname(self.db_path) else ".",
             exist_ok=True,
@@ -52,6 +51,14 @@ class SqliteVecStoreAdapter(IVectorStorePort):
             )
         """)
 
+        # Tracking table for resume / defense-in-depth
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS indexed_files (
+                file_path TEXT PRIMARY KEY,
+                indexed_at TEXT NOT NULL
+            )
+        """)
+
         conn.commit()
         conn.close()
         LOGGER.debug("Initialized sqlite-vec database at %s", self.db_path)
@@ -66,7 +73,7 @@ class SqliteVecStoreAdapter(IVectorStorePort):
     def store(
         self, repository_url: str, commit_sha: str, documents: list[dict[str, Any]]
     ) -> None:
-        """Store documents with their embeddings."""
+        """Store documents with their embeddings (bulk)."""
         if not documents:
             LOGGER.info("No documents to store")
             return
@@ -95,6 +102,79 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         conn.commit()
         conn.close()
         LOGGER.info("Stored %d chunks in database", len(documents))
+
+    def insert_one(
+        self,
+        doc_id: str,
+        file_path: str,
+        chunk_text: str,
+        embedding: list[float],
+    ) -> None:
+        """Insert a single chunk with its embedding. Autocommit per call.
+
+        Raises ValueError if embedding has the wrong dimension."""
+        if len(embedding) != _VECTOR_DIMENSION:
+            raise ValueError(
+                f"Embedding dimension mismatch: expected {_VECTOR_DIMENSION}, "
+                f"got {len(embedding)}"
+            )
+
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            """
+            INSERT INTO chunks (id, file_path, chunk_text, embedding)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                doc_id,
+                file_path,
+                chunk_text,
+                sqlite_vec.serialize_float32(embedding),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+    def is_file_indexed(self, file_path: str) -> bool:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM indexed_files WHERE file_path = ? LIMIT 1",
+            (file_path,),
+        )
+        row = cursor.fetchone()
+        conn.close()
+        return row is not None
+
+    def mark_file_indexed(self, file_path: str) -> None:
+        from datetime import datetime, timezone
+
+        now_iso = datetime.now(timezone.utc).isoformat()
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "INSERT OR IGNORE INTO indexed_files (file_path, indexed_at) VALUES (?, ?)",
+            (file_path, now_iso),
+        )
+        conn.commit()
+        conn.close()
+
+    def count_indexed_files(self) -> int:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM indexed_files")
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+
+    def indexed_files_set(self) -> Set[str]:
+        conn = self._get_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT file_path FROM indexed_files")
+        rows = cursor.fetchall()
+        conn.close()
+        return {row[0] for row in rows}
 
     def delete_by_file_paths(self, file_paths: list[str]) -> None:
         """Delete all chunks for the given file paths."""

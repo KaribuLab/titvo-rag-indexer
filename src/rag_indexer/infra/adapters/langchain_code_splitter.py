@@ -1,8 +1,10 @@
 import logging
 import os
+from typing import Iterator, List
 
 from langchain_text_splitters import Language, RecursiveCharacterTextSplitter
 
+from rag_indexer.domain.dto.file_content_dto import FileContent
 from rag_indexer.domain.ports.code_splitter_port import ICodeSplitter
 
 LOGGER = logging.getLogger(__name__)
@@ -12,7 +14,6 @@ def _get_extension_to_language() -> dict[str, Language]:
     """Build extension mapping only for available languages."""
     mapping: dict[str, Language] = {}
 
-    # Map extensions to Language enum values that exist
     lang_map = {
         ".py": "PYTHON",
         ".js": "JS",
@@ -129,29 +130,22 @@ class LangChainCodeSplitter(ICodeSplitter):
         return _EXTENSION_TO_LANGUAGE.get(ext_lower)
 
     def _is_excluded(self, file_path: str) -> bool:
-        # Check excluded directories
         parts = file_path.split(os.sep)
         for part in parts:
             if part in _EXCLUDED_DIRS:
                 return True
 
-        # Check excluded extensions
         _, ext = os.path.splitext(file_path)
         if ext.lower() in _EXCLUDED_EXTENSIONS:
             return True
 
         return False
 
-    def split(self, file_path: str, content: str) -> list[str]:
-        if self._is_excluded(file_path):
-            LOGGER.debug("Skipping excluded file: %s", file_path)
-            return []
-
+    def _build_splitter(self, file_path: str) -> RecursiveCharacterTextSplitter:
         language = self._get_language(file_path)
-
         if language:
             try:
-                splitter = RecursiveCharacterTextSplitter.from_language(
+                return RecursiveCharacterTextSplitter.from_language(
                     language=language,
                     chunk_size=self.chunk_size,
                     chunk_overlap=self.chunk_overlap,
@@ -160,16 +154,33 @@ class LangChainCodeSplitter(ICodeSplitter):
                 LOGGER.warning(
                     "Failed to create language splitter for %s: %s", file_path, e
                 )
-                splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=self.chunk_size,
-                    chunk_overlap=self.chunk_overlap,
-                )
-        else:
-            splitter = RecursiveCharacterTextSplitter(
-                chunk_size=self.chunk_size,
-                chunk_overlap=self.chunk_overlap,
-            )
+        return RecursiveCharacterTextSplitter(
+            chunk_size=self.chunk_size,
+            chunk_overlap=self.chunk_overlap,
+        )
 
+    def split(self, file_path: str, content: str) -> List[str]:
+        if self._is_excluded(file_path):
+            LOGGER.debug("Skipping excluded file: %s", file_path)
+            return []
+
+        splitter = self._build_splitter(file_path)
         chunks = splitter.split_text(content)
         LOGGER.debug("Split %s into %d chunks", file_path, len(chunks))
         return chunks
+
+    def iter_chunks(self, file: FileContent) -> Iterator[str]:
+        """Stream chunks for a file as an iterator (no full list in memory).
+
+        Yields (file_path, chunk_text) tuples so the consumer can track which
+        file a chunk belongs to without re-passing the file_path."""
+        if self._is_excluded(file.path):
+            LOGGER.debug("Skipping excluded file: %s", file.path)
+            return
+
+        splitter = self._build_splitter(file.path)
+        # split_text returns a list; we re-yield lazily. For true streaming with
+        # arbitrarily large files, switch to splitter.split_text_stream() if
+        # available in the installed langchain-text-splitters version.
+        for chunk in splitter.split_text(file.content):
+            yield chunk

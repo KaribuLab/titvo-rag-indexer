@@ -8,3 +8,4 @@ class IndexResultDto:
     is_delta: bool
     chunks_indexed: int
     files_processed: int
+    files_skipped_resume: int = 0
