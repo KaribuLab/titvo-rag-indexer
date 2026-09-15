@@ -88,8 +88,9 @@ jobs:
           set -euo pipefail
 
           POLICY_ARN="arn:aws:iam::895649849416:policy/tvo-rag-indexer-batch-prod-job-policy"
-          ROLE_NAME="karibulabs-github-actions-batch-role"
+          OIDC_ROLE_NAME="karibulabs-github-actions-batch-role"
           SSM_BUCKET_PATH="/tvo/security-scan/${AWS_STAGE}/infra/s3/rag-index/bucket_arn"
+          REQUIRED_OIDC_ACTION="iam:CreatePolicyVersion"
 
           echo "==> Check A: IAM policy del role de Batch tiene las acciones S3 esperadas"
 
@@ -143,19 +144,55 @@ jobs:
           echo "  ✓ Check A passed"
 
           echo ""
-          echo "==> Check B: el rol OIDC puede ejecutar iam:CreatePolicyVersion"
+          echo "==> Check B: el rol OIDC $OIDC_ROLE_NAME tiene $REQUIRED_OIDC_ACTION en alguna policy"
 
-          DECISION=$(aws iam simulate-principal-policy \
-            --policy-source-arn "arn:aws:iam::895649849416:role/$ROLE_NAME" \
-            --action-names "iam:CreatePolicyVersion" \
-            --resource-arns "$POLICY_ARN" \
-            --query 'EvaluationResults[0].EvalDecision' \
-            --output text 2>&1) || DECISION="error"
+          FOUND="false"
+          for ATTACHED_ARN in $(aws iam list-attached-role-policies \
+            --role-name "$OIDC_ROLE_NAME" \
+            --query 'AttachedPolicies[].PolicyArn' --output text); do
+            DEF_VER=$(aws iam get-policy --policy-arn "$ATTACHED_ARN" \
+              --query 'Policy.DefaultVersionId' --output text 2>/dev/null || echo "")
+            if [ -n "$DEF_VER" ]; then
+              DOC=$(aws iam get-policy-version --policy-arn "$ATTACHED_ARN" \
+                --version-id "$DEF_VER" \
+                --query 'PolicyVersion.Document' --output json 2>/dev/null || echo "")
+              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" '
+                  any(.Statement[];
+                      select(.Effect == "Allow");
+                      ((.Action
+                        | if type == "array" then . else [.] end)
+                       | index($a)))' > /dev/null; then
+                FOUND="true"
+                echo "  Encontrado en attached policy: $ATTACHED_ARN"
+                break
+              fi
+            fi
+          done
 
-          if [ "$DECISION" != "allowed" ]; then
-            echo "::error::El rol OIDC $ROLE_NAME no puede ejecutar iam:CreatePolicyVersion"
-            echo "  Decisión de AWS: $DECISION"
-            echo "  Fix: agregar iam:CreatePolicyVersion al rol en el módulo de infra compartida."
+          if [ "$FOUND" = "false" ]; then
+            for INLINE_NAME in $(aws iam list-role-policies \
+              --role-name "$OIDC_ROLE_NAME" \
+              --query 'PolicyNames[]' --output text); do
+              DOC=$(aws iam get-role-policy --role-name "$OIDC_ROLE_NAME" \
+                --policy-name "$INLINE_NAME" \
+                --query 'PolicyDocument' --output json 2>/dev/null || echo "")
+              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" '
+                  any(.Statement[];
+                      select(.Effect == "Allow");
+                      ((.Action
+                        | if type == "array" then . else [.] end)
+                       | index($a)))' > /dev/null; then
+                FOUND="true"
+                echo "  Encontrado en inline policy: $INLINE_NAME"
+                break
+              fi
+            done
+          fi
+
+          if [ "$FOUND" = "false" ]; then
+            echo "::error::El rol OIDC $OIDC_ROLE_NAME no tiene $REQUIRED_OIDC_ACTION en ninguna policy."
+            echo "  Si se necesita actualizar $POLICY_ARN en el futuro, el apply fallará con AccessDenied."
+            echo "  Fix: agregar $REQUIRED_OIDC_ACTION al rol en el módulo de infra compartida."
             exit 1
           fi
 
