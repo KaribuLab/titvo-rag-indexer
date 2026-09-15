@@ -107,9 +107,11 @@ jobs:
 
           REQUIRED_ACTIONS='["s3:GetObject","s3:PutObject","s3:CopyObject","s3:ListBucket","s3:DeleteObject"]'
           MISSING=$(echo "$POLICY_DOC" | jq -r --argjson req "$REQUIRED_ACTIONS" '
-            [.Statement[] | select(.Effect == "Allow")
-             | (.Action | if type == "array" then . else [.] end) as $a
-             | $req[] | select(. as $r | $a | index($r) | not)] | unique | .[]')
+            ([.Statement[]
+              | select(.Effect == "Allow")
+              | (.Action | if type == "array" then . else [.] end)]
+             | flatten | unique) as $allowed
+            | $req[] | select(. as $r | $allowed | index($r) | not)')
 
           if [ -n "$MISSING" ]; then
             echo "::error::Faltan acciones S3 en el IAM policy desplegado:"
