@@ -156,12 +156,12 @@ jobs:
               DOC=$(aws iam get-policy-version --policy-arn "$ATTACHED_ARN" \
                 --version-id "$DEF_VER" \
                 --query 'PolicyVersion.Document' --output json 2>/dev/null || echo "")
-              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" '
-                  any(.Statement[];
-                      select(.Effect == "Allow");
-                      ((.Action
-                        | if type == "array" then . else [.] end)
-                       | index($a)))' > /dev/null; then
+              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" \
+                  '[.Statement[]
+                    | select(.Effect == "Allow")
+                    | ((.Action | if type == "array" then . else [.] end)
+                       | index($a))]
+                   | any(. != null)' > /dev/null; then
                 FOUND="true"
                 echo "  Encontrado en attached policy: $ATTACHED_ARN"
                 break
@@ -176,12 +176,12 @@ jobs:
               DOC=$(aws iam get-role-policy --role-name "$OIDC_ROLE_NAME" \
                 --policy-name "$INLINE_NAME" \
                 --query 'PolicyDocument' --output json 2>/dev/null || echo "")
-              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" '
-                  any(.Statement[];
-                      select(.Effect == "Allow");
-                      ((.Action
-                        | if type == "array" then . else [.] end)
-                       | index($a)))' > /dev/null; then
+              if [ -n "$DOC" ] && echo "$DOC" | jq -e --arg a "$REQUIRED_OIDC_ACTION" \
+                  '[.Statement[]
+                    | select(.Effect == "Allow")
+                    | ((.Action | if type == "array" then . else [.] end)
+                       | index($a))]
+                   | any(. != null)' > /dev/null; then
                 FOUND="true"
                 echo "  Encontrado en inline policy: $INLINE_NAME"
                 break
