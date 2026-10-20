@@ -1,3 +1,5 @@
+"""Provide configured OpenAI-compatible embeddings with batching and retries."""
+
 import logging
 import time
 from typing import Iterable, Iterator, List
@@ -28,11 +30,14 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
         self._embeddings: Embeddings | None = None
 
     def _get_embeddings_client(self) -> Embeddings:
+        """Resolve configuration once and reuse the selected embedding endpoint."""
         if self._embeddings is not None:
             return self._embeddings
 
         provider = self.configuration_provider.get_value("embedding_provider")
         model = self.configuration_provider.get_value("embedding_model")
+        base_url = self.configuration_provider.get_value("embedding_base_url")
+        base_url = base_url.strip() if base_url else None
         api_key = self.configuration_provider.get_secret("embedding_api_key")
 
         if not provider:
@@ -52,9 +57,17 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
 
         if provider_lower == "openai":
             LOGGER.debug("Using OpenAI embeddings with model %s", model)
+            endpoint_options = {}
+            if base_url:
+                # Compatible providers expect text, not OpenAI-tokenized input.
+                endpoint_options = {
+                    "base_url": base_url,
+                    "check_embedding_ctx_length": False,
+                }
             self._embeddings = OpenAIEmbeddings(
                 model=model,
                 api_key=api_key,
+                **endpoint_options,
             )
         else:
             raise ValueError(f"Unsupported embedding provider: {provider}")
