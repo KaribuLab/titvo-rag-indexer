@@ -5,7 +5,7 @@ import tempfile
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Iterator, Optional
+from typing import Optional
 
 from rag_indexer.domain.dto.checkpoint_config_dto import CheckpointConfig
 from rag_indexer.domain.dto.file_content_dto import FileContent
@@ -500,13 +500,12 @@ class IndexRepositoryUseCase:
                 LOGGER.info("Skipping file already indexed: path=%s", file.path)
                 continue
 
-            # Stream chunks for this file
+            # Stream chunks for this file. The provider consumes the chunk
+            # iterator in batches and yields each chunk next to its vector, so
+            # the pairs stay aligned without reading the iterator twice.
             chunk_iter = self.code_splitter.iter_chunks(file)
-            embedding_iter = self.embedding_provider.embed_iter(chunk_iter)
 
-            for chunk_text, embedding in self._zip_chunks_with_embeddings(
-                file, chunk_iter, embedding_iter
-            ):
+            for chunk_text, embedding in self.embedding_provider.embed_iter(chunk_iter):
                 doc_id = str(uuid.uuid4())
                 vector_store.insert_one(
                     doc_id=doc_id,
@@ -524,15 +523,3 @@ class IndexRepositoryUseCase:
             )
 
         return total_chunks
-
-    def _zip_chunks_with_embeddings(
-        self,
-        file: FileContent,
-        chunk_iter: Iterator[str],
-        embedding_iter: Iterator[list[float]],
-    ) -> Iterator[tuple[str, list[float]]]:
-        """Pair chunks with their embeddings. Loose coupling so the consumer
-        can pull one at a time. If a builder of an embedding fails, the
-        embedding_provider already retries; if it ultimately fails, the
-        RuntimeError propagates and aborts the run."""
-        return zip(chunk_iter, embedding_iter)

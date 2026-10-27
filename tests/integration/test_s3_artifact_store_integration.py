@@ -90,7 +90,9 @@ def test_8_7_resume_skips_git_fetch_and_cat_file():
         FileContent(path="src/new.py", content="new"),
     ]
     use_case.code_splitter.iter_chunks.return_value = iter(["chunk"])
-    use_case.embedding_provider.embed_iter.return_value = iter([[0.1] * 1536])
+    use_case.embedding_provider.embed_iter.return_value = iter(
+        [("chunk", [0.1] * 1536)]
+    )
 
     with patch(
         "rag_indexer.application.index_repository_use_case.SqliteVecStoreAdapter"
@@ -359,7 +361,7 @@ def test_8_20_resume_does_not_reembed():
         iter([f"chunk_{i}"]) for i in range(5)
     ]
     use_case.embedding_provider.embed_iter.side_effect = [
-        iter([[0.1] * 1536]) for _ in range(5)
+        iter([("chunk", [0.1] * 1536)]) for _ in range(5)
     ]
 
     with patch(

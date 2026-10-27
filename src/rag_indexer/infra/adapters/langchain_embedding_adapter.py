@@ -121,11 +121,15 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
 
         return all_embeddings
 
-    def embed_iter(self, texts_iter: Iterable[str]) -> Iterator[List[float]]:
-        """Yield embeddings one at a time, batching the input iterator on-the-fly.
+    def embed_iter(
+        self, texts_iter: Iterable[str]
+    ) -> Iterator[tuple[str, List[float]]]:
+        """Yield ``(text, embedding)`` pairs, batching the input iterator on-the-fly.
 
         This is the streaming-friendly entry point. Memory: peak ~batch_size chunks
-        of floats, not the whole list."""
+        of text plus their floats, not the whole list. The text travels with its
+        vector because this method consumes ``texts_iter`` ahead of what it
+        yields; a caller zipping the source iterator again would be misaligned."""
         client = self._get_embeddings_client()
         batch: List[str] = []
         # We need to know total batches for logging, but with an iterator we cannot
@@ -133,10 +137,21 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
         for text in texts_iter:
             batch.append(text)
             if len(batch) >= self.batch_size:
-                yield from self._embed_with_retry(client, batch, 0, 0)
+                yield from self._embed_batch_pairs(client, batch)
                 batch = []
         if batch:
-            yield from self._embed_with_retry(client, batch, 0, 0)
+            yield from self._embed_batch_pairs(client, batch)
+
+    def _embed_batch_pairs(
+        self, client: Embeddings, batch: List[str]
+    ) -> Iterator[tuple[str, List[float]]]:
+        embeddings = self._embed_with_retry(client, batch, 0, 0)
+        if len(embeddings) != len(batch):
+            raise RuntimeError(
+                f"Embedding provider returned {len(embeddings)} vectors "
+                f"for {len(batch)} texts"
+            )
+        yield from zip(batch, embeddings)
 
     def _embed_with_retry(
         self,

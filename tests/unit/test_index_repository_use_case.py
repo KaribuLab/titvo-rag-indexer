@@ -154,8 +154,8 @@ class TestIndexRepositoryUseCase:
             iter(["chunk3"]),
         ]
         use_case.embedding_provider.embed_iter.side_effect = [
-            iter([[0.1] * 1536, [0.2] * 1536]),
-            iter([[0.3] * 1536]),
+            iter([("chunk", [0.1] * 1536), ("chunk", [0.2] * 1536)]),
+            iter([("chunk", [0.3] * 1536)]),
         ]
 
         mock_vs = MagicMock()
@@ -270,7 +270,9 @@ class TestCheckpointResume:
                 FileContent(path="src/new.py", content="y"),
             ]
             use_case.code_splitter.iter_chunks.return_value = iter(["chunk"])
-            use_case.embedding_provider.embed_iter.return_value = iter([[0.1] * 1536])
+            use_case.embedding_provider.embed_iter.return_value = iter(
+                [("chunk", [0.1] * 1536)]
+            )
 
             result = use_case._execute_full(
                 "https://github.com/owner/repo", "main", "abc123"
@@ -290,7 +292,9 @@ class TestCheckpointResume:
         files = [FileContent(path=f"src/f{i}.py", content="x") for i in range(5)]
         use_case.repository_provider.get_files.return_value = files
         use_case.code_splitter.iter_chunks.return_value = iter(["chunk"])
-        use_case.embedding_provider.embed_iter.return_value = iter([[0.1] * 1536])
+        use_case.embedding_provider.embed_iter.return_value = iter(
+            [("chunk", [0.1] * 1536)]
+        )
 
         with patch(
             "rag_indexer.application.index_repository_use_case.SqliteVecStoreAdapter"
@@ -497,7 +501,9 @@ class TestLockRelease:
             FileContent(path="src/a.py", content="x"),
         ]
         use_case.code_splitter.iter_chunks.return_value = iter(["chunk"])
-        use_case.embedding_provider.embed_iter.return_value = iter([[0.1] * 1536])
+        use_case.embedding_provider.embed_iter.return_value = iter(
+            [("chunk", [0.1] * 1536)]
+        )
         # renew_lock returns False (lock lost during run)
         use_case.artifact_store.renew_lock.return_value = False
 
@@ -566,8 +572,14 @@ class TestStreaming:
             iter(["c4"]),
         ]
         use_case.embedding_provider.embed_iter.side_effect = [
-            iter([[0.1] * 1536, [0.2] * 1536, [0.3] * 1536]),
-            iter([[0.4] * 1536]),
+            iter(
+                [
+                    ("chunk", [0.1] * 1536),
+                    ("chunk", [0.2] * 1536),
+                    ("chunk", [0.3] * 1536),
+                ]
+            ),
+            iter([("chunk", [0.4] * 1536)]),
         ]
 
         mock_vs = MagicMock()
@@ -593,8 +605,14 @@ class TestStreaming:
             iter(["c3", "c4", "c5"]),
         ]
         use_case.embedding_provider.embed_iter.side_effect = [
-            iter([[0.1] * 1536, [0.2] * 1536]),
-            iter([[0.3] * 1536, [0.4] * 1536, [0.5] * 1536]),
+            iter([("chunk", [0.1] * 1536), ("chunk", [0.2] * 1536)]),
+            iter(
+                [
+                    ("chunk", [0.3] * 1536),
+                    ("chunk", [0.4] * 1536),
+                    ("chunk", [0.5] * 1536),
+                ]
+            ),
         ]
 
         mock_vs = MagicMock()
@@ -649,3 +667,55 @@ class TestSnapshotUpload:
         assert use_case.artifact_store.upload_source_snapshot.call_count == 1
         # And deleted after success
         assert use_case.artifact_store.delete_source_snapshot.call_count == 1
+
+
+def test_process_files_inserts_every_chunk_aligned_with_a_real_provider():
+    """Regression: a generator shared between splitter and provider used to
+    insert one chunk per file with the next chunk's vector."""
+    from rag_indexer.infra.adapters.langchain_embedding_adapter import (
+        LangChainEmbeddingAdapter,
+    )
+
+    configuration = MagicMock()
+    configuration.get_value.side_effect = {
+        "embedding_provider": "openai",
+        "embedding_model": "m",
+    }.get
+    configuration.get_secret.return_value = "k"
+    provider = LangChainEmbeddingAdapter(configuration, batch_size=2)
+    fake = MagicMock()
+    fake.embed_documents.side_effect = lambda texts: [[float(len(t))] for t in texts]
+    provider._embeddings = fake
+
+    code_splitter = MagicMock()
+    code_splitter.iter_chunks.side_effect = lambda file: (c for c in ["a", "bb", "ccc"])
+    artifact_store = MagicMock()
+    artifact_store.renew_lock.return_value = True
+    use_case = IndexRepositoryUseCase(
+        repository_provider=MagicMock(),
+        code_splitter=code_splitter,
+        embedding_provider=provider,
+        artifact_store=artifact_store,
+        checkpoint_config=CheckpointConfig(every_n_files=100),
+    )
+    mock_vs = MagicMock()
+    mock_vs.is_file_indexed.return_value = False
+
+    total = use_case._process_files(
+        mock_vs,
+        [FileContent(path="src/a.py", content="x")],
+        "https://github.com/owner/repo",
+        "main",
+        "c",
+    )
+
+    assert total == 3
+    inserted = [
+        (c.kwargs["chunk_text"], c.kwargs["embedding"])
+        for c in mock_vs.insert_one.call_args_list
+    ]
+    assert inserted == [("a", [1.0]), ("bb", [2.0]), ("ccc", [3.0])]
+    assert [c.args[0] for c in fake.embed_documents.call_args_list] == [
+        ["a", "bb"],
+        ["ccc"],
+    ]

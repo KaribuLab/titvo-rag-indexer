@@ -114,7 +114,7 @@ def test_custom_endpoint_http_payload(configuration, monkeypatch, streaming):
             adapter = LangChainEmbeddingAdapter(provider, batch_size=2)
             texts = ["1", "2", "3"]
             result = (
-                list(adapter.embed_iter(iter(texts)))
+                [vector for _text, vector in adapter.embed_iter(iter(texts))]
                 if streaming
                 else adapter.embed(texts)
             )
@@ -275,3 +275,33 @@ def test_batch_size_resolved_once(configuration):
     assert adapter.batch_size == 10
     values["embedding_batch_size"] = "20"
     assert adapter.batch_size == 10
+
+
+def test_embed_iter_yields_text_next_to_its_vector(configuration):
+    """Pairs stay aligned across batch boundaries, even over a shared generator."""
+    provider, _values = configuration
+    adapter = LangChainEmbeddingAdapter(provider, batch_size=2)
+    fake = MagicMock()
+    fake.embed_documents.side_effect = lambda texts: [[float(t)] for t in texts]
+    adapter._embeddings = fake
+
+    def chunks():
+        yield from ["1", "2", "3"]
+
+    source = chunks()
+    pairs = list(adapter.embed_iter(source))
+
+    assert pairs == [("1", [1.0]), ("2", [2.0]), ("3", [3.0])]
+    assert [c.args[0] for c in fake.embed_documents.call_args_list] == [
+        ["1", "2"],
+        ["3"],
+    ]
+
+
+def test_embed_iter_rejects_vector_count_mismatch(configuration):
+    provider, _values = configuration
+    adapter = LangChainEmbeddingAdapter(provider, batch_size=10)
+    adapter._embeddings = MagicMock(embed_documents=lambda texts: [[0.1]])
+
+    with pytest.raises(RuntimeError, match="returned 1 vectors for 2 texts"):
+        list(adapter.embed_iter(iter(["a", "b"])))
