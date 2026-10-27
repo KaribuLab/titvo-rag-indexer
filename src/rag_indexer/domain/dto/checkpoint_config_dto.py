@@ -9,5 +9,4 @@ class CheckpointConfig:
     )
     max_snapshot_mb: int = 200
     lock_ttl_minutes: int = 360
-    embedding_batch_size: int = 1000
     lock_renew_interval_minutes: int = 30

@@ -228,3 +228,50 @@ class TestEmbedIter:
         result = list(adapter.embed_iter(iter([])))
         assert fake.call_count == 0
         assert result == []
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [(None, 1000), ("", 1000), ("   ", 1000), ("250", 250), (" 64 ", 64)],
+)
+def test_batch_size_resolved_from_configuration(configuration, raw, expected):
+    """`embedding_batch_size` comes from the configuration table, default 1000."""
+    provider, values = configuration
+    if raw is not None:
+        values["embedding_batch_size"] = raw
+
+    adapter = LangChainEmbeddingAdapter(provider)
+
+    assert adapter.batch_size == expected
+    provider.get_value.assert_any_call("embedding_batch_size")
+
+
+@pytest.mark.parametrize("raw", ["0", "-5", "abc", "1.5"])
+def test_invalid_batch_size_fails_fast(configuration, raw):
+    provider, values = configuration
+    values["embedding_batch_size"] = raw
+
+    with pytest.raises(ValueError, match="embedding_batch_size must be a positive"):
+        _ = LangChainEmbeddingAdapter(provider).batch_size
+
+
+def test_explicit_batch_size_skips_configuration(configuration):
+    provider, values = configuration
+    values["embedding_batch_size"] = "999"
+
+    adapter = LangChainEmbeddingAdapter(provider, batch_size=3)
+
+    assert adapter.batch_size == 3
+    assert "embedding_batch_size" not in [
+        c.args[0] for c in provider.get_value.call_args_list
+    ]
+
+
+def test_batch_size_resolved_once(configuration):
+    provider, values = configuration
+    values["embedding_batch_size"] = "10"
+
+    adapter = LangChainEmbeddingAdapter(provider)
+    assert adapter.batch_size == 10
+    values["embedding_batch_size"] = "20"
+    assert adapter.batch_size == 10

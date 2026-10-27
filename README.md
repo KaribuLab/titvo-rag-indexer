@@ -18,7 +18,26 @@ Se ejecuta como tarea de AWS Batch a demanda, recibiendo la URL del repositorio 
 | `TITVO_MAX_SNAPSHOT_MB` | Tamaño máximo permitido para el tarball del snapshot del `.git` antes de abortar | No | `200` |
 | `TITVO_LOCK_TTL_MINUTES` | TTL inicial del lock distribuido por branch | No | `360` |
 | `TITVO_LOCK_RENEW_INTERVAL_MINUTES` | Cada cuántos minutos se renueva el lock durante runs largos | No | `30` |
-| `TITVO_EMBEDDING_BATCH_SIZE` | Tamaño de batch (chunks) por request a OpenAI | No | `1000` |
+
+## Configuración de embeddings
+
+Se lee de la tabla DynamoDB de configuración (`parameter_id` / `value`), la misma que usa
+`src/agent` para embeber la consulta del scan:
+
+| Parámetro | Descripción | Requerido | Default |
+|---|---|---|---|
+| `embedding_provider` | Proveedor; solo `openai` (incluye endpoints compatibles) | Sí | — |
+| `embedding_model` | Modelo de embeddings | Sí | — |
+| `embedding_api_key` | Credencial, cifrada con `TITVO_ENCRYPTION_KEY_NAME` | Sí | — |
+| `embedding_base_url` | URL base de un endpoint compatible con OpenAI | No | API de OpenAI |
+| `embedding_batch_size` | Chunks por request a `embed_documents`; entero positivo | No | `1000` |
+
+Ejemplo:
+
+```bash
+aws dynamodb put-item --table-name <config-table> \
+  --item '{"parameter_id":{"S":"embedding_batch_size"},"value":{"S":"250"}}'
+```
 
 ## Configuración SSH
 

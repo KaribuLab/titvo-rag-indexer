@@ -57,7 +57,6 @@ def _build_checkpoint_config() -> CheckpointConfig:
         ),
         max_snapshot_mb=_parse_positive_int("TITVO_MAX_SNAPSHOT_MB", 200),
         lock_ttl_minutes=_parse_positive_int("TITVO_LOCK_TTL_MINUTES", 360),
-        embedding_batch_size=_parse_positive_int("TITVO_EMBEDDING_BATCH_SIZE", 1000),
         lock_renew_interval_minutes=_parse_positive_int(
             "TITVO_LOCK_RENEW_INTERVAL_MINUTES", 30
         ),
@@ -113,11 +112,10 @@ def main():
     checkpoint_config = _build_checkpoint_config()
     LOGGER.info(
         "Checkpoint config: every_n_files=%d max_snapshot_mb=%d "
-        "lock_ttl_minutes=%d embedding_batch_size=%d lock_renew_interval_minutes=%d",
+        "lock_ttl_minutes=%d lock_renew_interval_minutes=%d",
         checkpoint_config.every_n_files,
         checkpoint_config.max_snapshot_mb,
         checkpoint_config.lock_ttl_minutes,
-        checkpoint_config.embedding_batch_size,
         checkpoint_config.lock_renew_interval_minutes,
     )
 
@@ -128,9 +126,9 @@ def main():
             chunk_size=chunk_size,
             chunk_overlap=chunk_overlap,
         )
+        # Batch size comes from the configuration table (`embedding_batch_size`).
         embedding_provider = LangChainEmbeddingAdapter(
             configuration_provider=configuration_provider,
-            batch_size=checkpoint_config.embedding_batch_size,
         )
         artifact_store = S3ArtifactStoreAdapter(
             s3_client=create_boto3_client("s3"),

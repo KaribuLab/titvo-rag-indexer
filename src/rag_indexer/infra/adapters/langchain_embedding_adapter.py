@@ -23,11 +23,42 @@ class LangChainEmbeddingAdapter(IEmbeddingProvider):
     def __init__(
         self,
         configuration_provider: IConfigurationProvider,
-        batch_size: int = _DEFAULT_BATCH_SIZE,
+        batch_size: int | None = None,
     ):
         self.configuration_provider = configuration_provider
-        self.batch_size = batch_size
+        # Explicit value wins (tests, local runs); otherwise resolved lazily from
+        # the configuration table (`embedding_batch_size`), default 1000.
+        self._batch_size: int | None = batch_size
         self._embeddings: Embeddings | None = None
+
+    @property
+    def batch_size(self) -> int:
+        """Chunks per `embed_documents` request, resolved once per instance."""
+        if self._batch_size is None:
+            self._batch_size = self._resolve_batch_size()
+        return self._batch_size
+
+    def _resolve_batch_size(self) -> int:
+        raw = self.configuration_provider.get_value("embedding_batch_size")
+        raw = raw.strip() if isinstance(raw, str) else raw
+        if raw is None or raw == "":
+            LOGGER.info(
+                "embedding_batch_size not configured; using default %d",
+                _DEFAULT_BATCH_SIZE,
+            )
+            return _DEFAULT_BATCH_SIZE
+        try:
+            value = int(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"embedding_batch_size must be a positive integer, got {raw!r}"
+            ) from exc
+        if value <= 0:
+            raise ValueError(
+                f"embedding_batch_size must be a positive integer, got {value}"
+            )
+        LOGGER.info("Using embedding_batch_size=%d from configuration", value)
+        return value
 
     def _get_embeddings_client(self) -> Embeddings:
         """Resolve configuration once and reuse the selected embedding endpoint."""
