@@ -8,9 +8,9 @@ import pytest
 
 from rag_indexer.infra.adapters import ssh_git_repository_adapter
 from rag_indexer.infra.adapters.ssh_git_repository_adapter import (
+    _STDERR_LOG_LIMIT,
     SshGitRepositoryAdapter,
     SubprocessGitRunner,
-    _STDERR_LOG_LIMIT,
 )
 
 FROM_SHA = "a" * 40
