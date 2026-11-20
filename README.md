@@ -50,7 +50,15 @@ La tabla de configuración debe contener, encriptada, la llave del proveedor que
 
 El servicio desencripta solo la llave correspondiente a la URL recibida. Debe ser una llave de solo
 lectura, sin passphrase y con formato PEM válido. La imagen incluye `git`, `openssh-client` y host keys
-fijadas para `github.com` y `bitbucket.org`.
+fijadas para `github.com` y `ssh.bitbucket.org` (conserva las de `bitbucket.org`).
+
+Las entradas `https://bitbucket.org/workspace/repo.git`,
+`git@bitbucket.org:workspace/repo.git` y `git@ssh.bitbucket.org:workspace/repo.git`
+usan el remoto `git@ssh.bitbucket.org:workspace/repo.git` y la misma llave
+`bitbucket_ssh_private_key`. Solo cambia el transporte Git: la URL original
+usada como identidad de indexación se conserva. SSH verifica el endpoint con
+`StrictHostKeyChecking=yes` y las llaves de [Atlassian](https://bitbucket.org/site/ssh),
+contrastadas con los [fingerprints oficiales](https://support.atlassian.com/bitbucket-cloud/docs/configure-ssh-and-two-step-verification/).
 
 ## Desarrollo local
 
@@ -61,7 +69,7 @@ uv run python src/main.py
 
 Para ejecutar una indexación local, configure primero la llave cifrada en la tabla de configuración y
 use una URL admitida, por ejemplo `https://github.com/org/repo` o
-`git@bitbucket.org:workspace/repo.git`.
+`git@ssh.bitbucket.org:workspace/repo.git`; las URLs antiguas siguen admitidas.
 
 ## Infraestructura
 

@@ -17,13 +17,29 @@ from rag_indexer.domain.ports.repository_provider import IRepositoryProvider
 LOGGER = logging.getLogger(__name__)
 
 _COMMAND_TIMEOUT_SECONDS = 300
+_STDERR_LOG_LIMIT = 4096
 _SHA_PATTERN = re.compile(r"^[0-9a-fA-F]{40}$")
 _PATH_SEGMENT_PATTERN = re.compile(r"^[A-Za-z0-9_.-]+$")
 _SSH_URL_PATTERN = re.compile(r"^git@(?P<host>[^:]+):(?P<path>[^?#]+)$")
 
+
+def _decode_process_output(data: bytes | str | None) -> str:
+    if data is None:
+        return ""
+    if isinstance(data, bytes):
+        return data.decode("utf-8", errors="replace").strip()
+    return data.strip()
+
+
+def _truncate_tail(text: str, limit: int = _STDERR_LOG_LIMIT) -> str:
+    if len(text) <= limit:
+        return text
+    return text[-limit:]
+
 _PROVIDER_SECRET_NAMES = {
     "github.com": "github_ssh_private_key",
     "bitbucket.org": "bitbucket_ssh_private_key",
+    "ssh.bitbucket.org": "bitbucket_ssh_private_key",
 }
 
 _EXCLUDED_EXTENSIONS = {
@@ -81,7 +97,7 @@ class GitRunner(Protocol):
 
 
 def parse_repository_url(url: str) -> RepositoryLocation:
-    """Validate a supported repository URL and normalize it to SSH."""
+    """Derive validated SSH transport without rewriting the input identity."""
     host: str
     raw_path: str
 
@@ -108,7 +124,7 @@ def parse_repository_url(url: str) -> RepositoryLocation:
     if secret_name is None:
         raise ValueError(
             f"Unsupported repository provider for URL: {url}. "
-            "Only github.com and bitbucket.org are supported."
+            "Only github.com, bitbucket.org and ssh.bitbucket.org are supported."
         )
 
     clean_path = raw_path.rstrip("/")
@@ -119,11 +135,13 @@ def parse_repository_url(url: str) -> RepositoryLocation:
         raise ValueError(f"Invalid repository path for {host}: {raw_path}")
 
     owner, repository = parts
+    # Keep the input host in the location; only Git uses the transport hostname.
+    ssh_host = "ssh.bitbucket.org" if host == "bitbucket.org" else host
     return RepositoryLocation(
         host=host,
         owner=owner,
         repository=repository,
-        clone_url=f"git@{host}:{owner}/{repository}.git",
+        clone_url=f"git@{ssh_host}:{owner}/{repository}.git",
         secret_name=secret_name,
     )
 
@@ -175,13 +193,26 @@ class SubprocessGitRunner:
             )
             return result.stdout
         except subprocess.TimeoutExpired as error:
-            raise RuntimeError(f"Git command timed out: git {args[0]}") from error
+            stderr = _truncate_tail(_decode_process_output(error.stderr))
+            stdout = _truncate_tail(_decode_process_output(error.stdout))
+            details: list[str] = []
+            if stderr:
+                details.append(f"stderr={stderr}")
+            if stdout:
+                details.append(f"stdout={stdout}")
+            message = f"Git command timed out: git {args[0]}"
+            if details:
+                message = f"{message}: {'; '.join(details)}"
+            LOGGER.error(message)
+            raise RuntimeError(message) from error
         except subprocess.CalledProcessError as error:
-            stderr = error.stderr.decode("utf-8", errors="replace").strip()
-            detail = stderr.splitlines()[-1] if stderr else "unknown error"
-            raise RuntimeError(
-                f"Git command failed: git {args[0]}: {detail}"
-            ) from error
+            stderr = _truncate_tail(_decode_process_output(error.stderr))
+            detail = stderr if stderr else "(empty stderr)"
+            message = (
+                f"Git command failed: git {args[0]} (exit={error.returncode}): {detail}"
+            )
+            LOGGER.error(message)
+            raise RuntimeError(message) from error
 
 
 class SshGitRepositoryAdapter(IRepositoryProvider):
@@ -388,7 +419,6 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
         self._runner.run(
             [
                 "fetch",
-                "--quiet",
                 "--depth=1",
                 "--no-tags",
                 self.clone_url,

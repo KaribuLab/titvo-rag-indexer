@@ -29,13 +29,19 @@ from rag_indexer.infra.adapters.ssh_git_repository_adapter import (
         (
             "https://bitbucket.org/acme/service.git",
             "bitbucket.org",
-            "git@bitbucket.org:acme/service.git",
+            "git@ssh.bitbucket.org:acme/service.git",
             "bitbucket_ssh_private_key",
         ),
         (
             "git@bitbucket.org:acme/service",
             "bitbucket.org",
-            "git@bitbucket.org:acme/service.git",
+            "git@ssh.bitbucket.org:acme/service.git",
+            "bitbucket_ssh_private_key",
+        ),
+        (
+            "git@ssh.bitbucket.org:acme/service.git",
+            "ssh.bitbucket.org",
+            "git@ssh.bitbucket.org:acme/service.git",
             "bitbucket_ssh_private_key",
         ),
     ],
@@ -53,6 +59,8 @@ def test_parse_repository_url(url, host, clone_url, secret_name):
     [
         "https://evilgithub.com/acme/service",
         "https://github.com.evil.test/acme/service",
+        "git@ssh.bitbucket.org.example.com:acme/service.git",
+        "https://bitbucket.org.example.com/acme/service.git",
         "http://github.com/acme/service",
         "https://user@github.com/acme/service",
         "https://github.com/acme",
@@ -66,19 +74,28 @@ def test_parse_repository_url_rejects_invalid_or_unsupported_urls(url):
         parse_repository_url(url)
 
 
-def test_factory_loads_only_the_selected_provider_key():
+@pytest.mark.parametrize(
+    ("url", "secret"),
+    [
+        ("https://github.com/acme/service", "github_ssh_private_key"),
+        ("https://bitbucket.org/acme/service", "bitbucket_ssh_private_key"),
+        ("git@bitbucket.org:acme/service.git", "bitbucket_ssh_private_key"),
+        ("git@ssh.bitbucket.org:acme/service.git", "bitbucket_ssh_private_key"),
+    ],
+)
+def test_factory_loads_only_the_selected_provider_key(url, secret):
     configuration_provider = MagicMock()
     configuration_provider.get_secret.return_value = "private-key"
     runner = MagicMock()
 
     provider = create_repository_provider(
-        "https://github.com/acme/service",
+        url,
         configuration_provider,
         runner=runner,
     )
 
     assert isinstance(provider, SshGitRepositoryAdapter)
-    configuration_provider.get_secret.assert_called_once_with("github_ssh_private_key")
+    configuration_provider.get_secret.assert_called_once_with(secret)
     provider.close()
 
 

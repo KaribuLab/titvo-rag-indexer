@@ -1,16 +1,38 @@
+import logging
 import stat
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
+from rag_indexer.infra.adapters import ssh_git_repository_adapter
 from rag_indexer.infra.adapters.ssh_git_repository_adapter import (
     SshGitRepositoryAdapter,
     SubprocessGitRunner,
+    _STDERR_LOG_LIMIT,
 )
 
 FROM_SHA = "a" * 40
 TO_SHA = "b" * 40
+
+
+def test_packaged_bitbucket_host_keys_match_official_fingerprints():
+    """Check the runtime trust file recognizes the SSH host with official keys."""
+    hosts = Path(ssh_git_repository_adapter.__file__).with_name("known_hosts")
+    found = subprocess.run(
+        ["ssh-keygen", "-F", "ssh.bitbucket.org", "-f", str(hosts)],
+        check=True, capture_output=True, text=True,
+    )
+    fingerprints = subprocess.run(
+        ["ssh-keygen", "-lf", "-"], input=found.stdout,
+        check=True, capture_output=True, text=True,
+    )
+    assert {line.split()[1] for line in fingerprints.stdout.splitlines()} == {
+        "SHA256:ybgmFkzwOSotHTHLJgHO0QN8L0xErw6vd0VhFA9m3SM",
+        "SHA256:FC73VB6C4OQLSCrjEayhMp9UMxS97caD/Yyi2bhW/J0",
+        "SHA256:46OSHA1Rmj8E8ERTC6xkNcmGOw9oFxYr0WF6zWW8l1E",
+    }
 
 
 class FakeGitRunner:
@@ -61,19 +83,110 @@ def test_subprocess_runner_uses_hardened_non_interactive_environment(tmp_path):
     assert str(known_hosts_path) in ssh_command
 
 
-def test_subprocess_runner_reports_failure_without_command_arguments(tmp_path):
+def test_subprocess_runner_reports_failure_without_command_arguments(
+    tmp_path, caplog
+):
     runner = SubprocessGitRunner(tmp_path / "key", tmp_path / "known_hosts")
     failure = subprocess.CalledProcessError(
         128,
         ["git", "fetch", "secret-argument"],
-        stderr=b"Permission denied",
+        stderr=b"Permission denied\nremote: Access denied",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with patch("subprocess.run", side_effect=failure):
+            with pytest.raises(RuntimeError) as error:
+                runner.run(["fetch", "secret-argument"])
+
+    message = str(error.value)
+    assert "git fetch (exit=128)" in message
+    assert "Permission denied" in message
+    assert "remote: Access denied" in message
+    assert "secret-argument" not in message
+    assert any(
+        record.levelno == logging.ERROR and "exit=128" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_subprocess_runner_reports_exit_code_when_stderr_empty(tmp_path):
+    runner = SubprocessGitRunner(tmp_path / "key", tmp_path / "known_hosts")
+    failure = subprocess.CalledProcessError(
+        1,
+        ["git", "fetch", "secret-argument"],
+        stderr=b"",
     )
 
     with patch("subprocess.run", side_effect=failure):
-        with pytest.raises(RuntimeError, match="git fetch: Permission denied") as error:
+        with pytest.raises(RuntimeError) as error:
             runner.run(["fetch", "secret-argument"])
 
-    assert "secret-argument" not in str(error.value)
+    message = str(error.value)
+    assert "git fetch (exit=1)" in message
+    assert "(empty stderr)" in message
+    assert "unknown error" not in message
+    assert "secret-argument" not in message
+
+
+def test_subprocess_runner_truncates_long_stderr_from_tail(tmp_path):
+    runner = SubprocessGitRunner(tmp_path / "key", tmp_path / "known_hosts")
+    long_stderr = ("x" * (_STDERR_LOG_LIMIT + 50)) + "CAUSE_AT_END"
+    failure = subprocess.CalledProcessError(
+        128,
+        ["git", "fetch"],
+        stderr=long_stderr.encode(),
+    )
+
+    with patch("subprocess.run", side_effect=failure):
+        with pytest.raises(RuntimeError) as error:
+            runner.run(["fetch"])
+
+    message = str(error.value)
+    assert "CAUSE_AT_END" in message
+    assert len(message) < len(long_stderr) + 100
+
+
+def test_subprocess_runner_reports_timeout_with_captured_output(tmp_path, caplog):
+    runner = SubprocessGitRunner(tmp_path / "key", tmp_path / "known_hosts")
+    timeout = subprocess.TimeoutExpired(
+        ["git", "fetch", "secret-argument"],
+        timeout=17,
+        output=b"partial-out",
+        stderr=b"still waiting",
+    )
+
+    with caplog.at_level(logging.ERROR):
+        with patch("subprocess.run", side_effect=timeout):
+            with pytest.raises(RuntimeError) as error:
+                runner.run(["fetch", "secret-argument"])
+
+    message = str(error.value)
+    assert "Git command timed out: git fetch" in message
+    assert "stderr=still waiting" in message
+    assert "stdout=partial-out" in message
+    assert "secret-argument" not in message
+    assert any(
+        record.levelno == logging.ERROR and "timed out" in record.getMessage()
+        for record in caplog.records
+    )
+
+
+def test_fetch_commit_omits_quiet_flag(adapter):
+    repository, runner = adapter
+    runner.responses["ls-tree"] = b""
+
+    repository.get_files("ignored", TO_SHA)
+
+    fetches = [call for call in runner.calls if call[0][0] == "fetch"]
+    assert len(fetches) == 1
+    assert fetches[0][0] == [
+        "fetch",
+        "--depth=1",
+        "--no-tags",
+        "git@github.com:acme/service.git",
+        TO_SHA,
+    ]
+    assert "--quiet" not in fetches[0][0]
 
 
 def test_private_key_permissions_and_idempotent_cleanup(adapter):
