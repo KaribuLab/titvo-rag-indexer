@@ -36,6 +36,13 @@ class TestIndexedFilesTable:
         store.mark_file_indexed("src/b.py")
         assert store.indexed_files_set() == {"src/a.py", "src/b.py"}
 
+    def test_delete_by_file_paths_clears_indexed_files(self, store):
+        store.mark_file_indexed("src/a.py")
+        store.insert_one("d1", "src/a.py", "chunk", [0.1] * 1536)
+        store.delete_by_file_paths(["src/a.py"])
+        assert not store.is_file_indexed("src/a.py")
+        assert store.count_indexed_files() == 0
+
 
 class TestInsertOne:
     def test_5D_2_insert_one_persists_chunk(self, store):

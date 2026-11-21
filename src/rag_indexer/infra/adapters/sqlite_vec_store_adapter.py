@@ -177,7 +177,7 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         return {row[0] for row in rows}
 
     def delete_by_file_paths(self, file_paths: list[str]) -> None:
-        """Delete all chunks for the given file paths."""
+        """Delete chunks and indexed_files rows for the given paths."""
         if not file_paths:
             return
 
@@ -188,8 +188,12 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         cursor.execute(
             f"DELETE FROM chunks WHERE file_path IN ({placeholders})", file_paths
         )
-
         deleted = cursor.rowcount
+        cursor.execute(
+            f"DELETE FROM indexed_files WHERE file_path IN ({placeholders})",
+            file_paths,
+        )
+
         conn.commit()
         conn.close()
         LOGGER.info("Deleted %d chunks for %d files", deleted, len(file_paths))

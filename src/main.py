@@ -14,7 +14,9 @@ from rag_indexer.infra.adapters.langchain_embedding_adapter import (
     LangChainEmbeddingAdapter,
 )
 from rag_indexer.infra.adapters.repository_provider_factory import (
+    create_cli_repository_provider,
     create_repository_provider,
+    resolve_cli_files_bucket,
 )
 from rag_indexer.infra.adapters.s3_artifact_store_adapter import (
     S3ArtifactStoreAdapter,
@@ -63,25 +65,42 @@ def _build_checkpoint_config() -> CheckpointConfig:
     )
 
 
+def _is_cli_source() -> bool:
+    return os.getenv("TITVO_SOURCE_TYPE", "").strip().lower() == "cli"
+
+
 def main():
     repo_url = os.getenv("TITVO_REPO_URL")
+    source_type = os.getenv("TITVO_SOURCE_TYPE", "git").strip().lower() or "git"
     commit_sha = os.getenv("TITVO_COMMIT_SHA")
     branch = os.getenv("TITVO_BRANCH")
+    batch_id = os.getenv("TITVO_SOURCE_BATCH_ID")
 
     LOGGER.debug(
-        "Starting rag-indexer with repo=%s, commit=%s, branch=%s",
+        "Starting rag-indexer source_type=%s repo=%s commit=%s "
+        "branch=%s batch_id=%s",
+        source_type,
         repo_url,
         commit_sha,
         branch,
+        batch_id,
     )
 
     if repo_url is None:
         raise ValueError("TITVO_REPO_URL is not set")
-    if branch is None:
-        raise ValueError(
-            "TITVO_BRANCH is required. Use TITVO_BRANCH for full index or "
-            "TITVO_BRANCH + TITVO_COMMIT_SHA for delta index."
-        )
+
+    cli_mode = _is_cli_source()
+    if cli_mode:
+        if not batch_id:
+            raise ValueError(
+                "TITVO_SOURCE_BATCH_ID is required when TITVO_SOURCE_TYPE=cli"
+            )
+    else:
+        if branch is None:
+            raise ValueError(
+                "TITVO_BRANCH is required. Use TITVO_BRANCH for full index or "
+                "TITVO_BRANCH + TITVO_COMMIT_SHA for delta index."
+            )
 
     config_table_name = os.getenv("TITVO_DYNAMO_CONFIGURATION_TABLE_NAME")
     LOGGER.debug("Config table name: %s", config_table_name)
@@ -104,10 +123,24 @@ def main():
         ),
     )
 
-    repository_provider = create_repository_provider(
-        url=repo_url,
-        configuration_provider=configuration_provider,
-    )
+    if cli_mode:
+        cli_bucket = resolve_cli_files_bucket(
+            configuration_provider,
+            env_bucket=(
+                os.getenv("TITVO_CLI_FILES_BUCKET")
+                or os.getenv("TITVO_DYNAMO_CLI_FILES_BUCKET_NAME")
+            ),
+        )
+        repository_provider = create_cli_repository_provider(
+            s3_client=create_boto3_client("s3"),
+            bucket=cli_bucket,
+            batch_id=batch_id or "",
+        )
+    else:
+        repository_provider = create_repository_provider(
+            url=repo_url,
+            configuration_provider=configuration_provider,
+        )
 
     checkpoint_config = _build_checkpoint_config()
     LOGGER.info(
@@ -143,17 +176,25 @@ def main():
             checkpoint_config=checkpoint_config,
             job_id=job_id,
         )
-        result = use_case.execute(
-            repository_url=repo_url,
-            branch=branch,
-            commit_sha=commit_sha,
-        )
+        if cli_mode:
+            lock_wait = _parse_positive_int("TITVO_CLI_LOCK_WAIT_SECONDS", 300)
+            result = use_case.execute_cli(
+                repository_url=repo_url,
+                batch_id=batch_id or "",
+                lock_wait_seconds=lock_wait,
+            )
+        else:
+            result = use_case.execute(
+                repository_url=repo_url,
+                branch=branch or "",
+                commit_sha=commit_sha,
+            )
 
         LOGGER.info(
             "Indexing complete: repo=%s, commit=%s, is_delta=%s, "
             "chunks=%d files=%d skipped_resume=%d",
             result.repository_url,
-            result.commit_sha[:7],
+            result.commit_sha[:7] if result.commit_sha else "",
             result.is_delta,
             result.chunks_indexed,
             result.files_processed,

@@ -135,3 +135,68 @@ class IArtifactStorePort(abc.ABC):
     ) -> Optional[dict]:
         """Read and return the lock info dict, or None if no lock exists."""
         pass
+
+    # ---------- CLI index ({repo}/cli/latest/) ----------
+
+    @abc.abstractmethod
+    def upload_cli_latest(
+        self,
+        repository_url: str,
+        db_path: str,
+        manifest: dict,
+        meta: dict,
+    ) -> None:
+        """Upload index.db, manifest.json and meta.json under {repo}/cli/latest/."""
+        pass
+
+    @abc.abstractmethod
+    def download_cli_latest_db(
+        self,
+        repository_url: str,
+        target_path: str,
+    ) -> Optional[str]:
+        """Download {repo}/cli/latest/index.db to target_path. None if absent."""
+        pass
+
+    @abc.abstractmethod
+    def get_cli_latest_manifest(self, repository_url: str) -> Optional[dict]:
+        """Read {repo}/cli/latest/manifest.json or None if absent."""
+        pass
+
+    @abc.abstractmethod
+    def get_cli_latest_meta(self, repository_url: str) -> Optional[dict]:
+        """Read {repo}/cli/latest/meta.json or None if absent."""
+        pass
+
+    @abc.abstractmethod
+    def acquire_cli_lock(
+        self,
+        repository_url: str,
+        owner: str,
+        ttl_minutes: int,
+        batch_id: str = "",
+        aws_batch_job_id: Optional[str] = None,
+    ) -> bool:
+        """Acquire {repo}/cli/lock.json. True if acquired, False if held."""
+        pass
+
+    @abc.abstractmethod
+    def release_cli_lock(self, repository_url: str, owner: str) -> bool:
+        """Release CLI lock if owned by ``owner``."""
+        pass
+
+    @abc.abstractmethod
+    def renew_cli_lock(
+        self,
+        repository_url: str,
+        owner: str,
+        etag: str,
+        new_expires_at: str,
+    ) -> bool:
+        """Renew CLI lock expiry with IfMatch=etag."""
+        pass
+
+    @abc.abstractmethod
+    def get_cli_lock(self, repository_url: str) -> Optional[dict]:
+        """Read CLI lock info dict, or None if no lock exists."""
+        pass

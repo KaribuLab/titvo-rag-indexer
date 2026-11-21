@@ -7,6 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from rag_indexer.application.cli_manifest_merge import plan_cli_merge
 from rag_indexer.domain.dto.checkpoint_config_dto import CheckpointConfig
 from rag_indexer.domain.dto.file_content_dto import FileContent
 from rag_indexer.domain.dto.index_result_dto import IndexResultDto
@@ -20,6 +21,11 @@ LOGGER = logging.getLogger(__name__)
 
 _DEFAULT_DB_PATH = "/tmp/rag_index.db"
 _DELTA_DB_PATH = "/tmp/rag_index_delta.db"
+_CLI_DB_PATH = "/tmp/rag_index_cli.db"
+# Wait up to 300s for another CLI job's lock; poll every 5s. Stale locks
+# (expires_at in the past) are taken over. TTL comes from CheckpointConfig.
+_DEFAULT_CLI_LOCK_WAIT_SECONDS = 300
+_DEFAULT_CLI_LOCK_POLL_SECONDS = 5
 
 
 class IndexRepositoryUseCase:
@@ -137,6 +143,264 @@ class IndexRepositoryUseCase:
                 )
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Failed to release lock: %s", exc)
+
+    # ---------- CLI (S3 snapshot, no Git) ----------
+
+    def execute_cli(
+        self,
+        repository_url: str,
+        batch_id: str,
+        lock_wait_seconds: int = _DEFAULT_CLI_LOCK_WAIT_SECONDS,
+        lock_poll_seconds: int = _DEFAULT_CLI_LOCK_POLL_SECONDS,
+    ) -> IndexResultDto:
+        """Index from CLI temp batch into ``{repo}/cli/latest/`` with merge.
+
+        Acquires ``{repo}/cli/lock.json`` waiting up to ``lock_wait_seconds``
+        (default 300). Stale locks (expires_at <= now) are released and taken
+        over. Fails if the wait budget expires while another owner holds a
+        fresh lock.
+        """
+        provider = self.repository_provider
+        if not hasattr(provider, "scan_manifest") or not hasattr(
+            provider, "get_files_for_paths"
+        ):
+            raise TypeError(
+                "execute_cli requires a CLI snapshot repository provider "
+                "(scan_manifest + get_files_for_paths)"
+            )
+        LOGGER.info(
+            "Starting CLI indexing for repository=%s batch_id=%s",
+            repository_url,
+            batch_id,
+        )
+
+        lock_ttl = self.checkpoint_config.lock_ttl_minutes
+        self._acquire_cli_lock_with_wait(
+            repository_url=repository_url,
+            batch_id=batch_id,
+            lock_ttl=lock_ttl,
+            wait_seconds=lock_wait_seconds,
+            poll_seconds=lock_poll_seconds,
+        )
+        self._lock_acquired_at = datetime.now(timezone.utc)
+        self._lock_renew_interval = timedelta(
+            minutes=self.checkpoint_config.lock_renew_interval_minutes
+        )
+        cli_lock = self.artifact_store.get_cli_lock(repository_url)
+        self._current_lock_etag = cli_lock.get("etag") if cli_lock else None
+
+        try:
+            return self._execute_cli_merge(repository_url, batch_id, provider)
+        finally:
+            try:
+                self.artifact_store.release_cli_lock(repository_url, self.job_id)
+            except Exception as exc:  # noqa: BLE001
+                LOGGER.warning("Failed to release CLI lock: %s", exc)
+
+    def _acquire_cli_lock_with_wait(
+        self,
+        repository_url: str,
+        batch_id: str,
+        lock_ttl: int,
+        wait_seconds: int,
+        poll_seconds: int,
+    ) -> None:
+        deadline = time.monotonic() + wait_seconds
+        while True:
+            acquired = self.artifact_store.acquire_cli_lock(
+                repository_url=repository_url,
+                owner=self.job_id,
+                ttl_minutes=lock_ttl,
+                batch_id=batch_id,
+                aws_batch_job_id=self.job_id,
+            )
+            if acquired:
+                return
+
+            existing = self.artifact_store.get_cli_lock(repository_url)
+            if existing:
+                expires_at = existing.get("expires_at")
+                try:
+                    expired = bool(
+                        expires_at
+                        and datetime.fromisoformat(expires_at)
+                        <= datetime.now(timezone.utc)
+                    )
+                except ValueError:
+                    expired = False
+                if expired:
+                    LOGGER.warning(
+                        "Stale CLI lock found (expires_at=%s). Taking over.",
+                        expires_at,
+                    )
+                    self.artifact_store.release_cli_lock(
+                        repository_url, existing.get("owner", "")
+                    )
+                    continue
+
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                holder = existing.get("owner") if existing else "unknown"
+                raise RuntimeError(
+                    f"CLI lock wait timed out after {wait_seconds}s "
+                    f"(held by {holder})"
+                )
+            sleep_for = min(poll_seconds, remaining)
+            LOGGER.info(
+                "CLI lock held; waiting %.1fs (remaining budget %.1fs)",
+                sleep_for,
+                remaining,
+            )
+            time.sleep(sleep_for)
+
+    def _execute_cli_merge(
+        self,
+        repository_url: str,
+        batch_id: str,
+        provider,
+    ) -> IndexResultDto:
+        manifest = provider.scan_manifest
+        new_files = manifest.get("files") or []
+        previous = self.artifact_store.get_cli_latest_manifest(repository_url)
+        prev_files = (previous or {}).get("files") if previous else None
+        plan = plan_cli_merge(prev_files, new_files)
+
+        commit_ref = str(manifest.get("commit") or batch_id)
+
+        if plan.inventory_identical and previous is not None:
+            LOGGER.info(
+                "CLI inventory identical (%d files); no-op merge for %s",
+                len(new_files),
+                repository_url,
+            )
+            return IndexResultDto(
+                repository_url=repository_url,
+                commit_sha=commit_ref,
+                is_delta=True,
+                chunks_indexed=0,
+                files_processed=0,
+                files_skipped_resume=len(plan.skip),
+            )
+
+        self.db_path = _CLI_DB_PATH
+        if os.path.exists(self.db_path):
+            os.remove(self.db_path)
+
+        had_previous = previous is not None
+        prev_paths = {item["path"] for item in (prev_files or [])}
+        if had_previous:
+            downloaded = self.artifact_store.download_cli_latest_db(
+                repository_url, self.db_path
+            )
+            if not downloaded:
+                LOGGER.warning(
+                    "CLI manifest exists but index.db missing; "
+                    "rebuilding from inventory"
+                )
+                plan = plan_cli_merge(None, new_files)
+                had_previous = False
+                prev_paths = set()
+
+        vector_store = self._open_db(self.db_path)
+
+        # Drop absent paths; clear chunks for paths we will re-embed.
+        to_clear = sorted(plan.drop | (plan.embed & prev_paths))
+        if to_clear:
+            vector_store.delete_by_file_paths(to_clear)
+
+        files = provider.get_files_for_paths(set(plan.embed))
+        LOGGER.info(
+            "CLI merge: embed=%d skip=%d drop=%d",
+            len(plan.embed),
+            len(plan.skip),
+            len(plan.drop),
+        )
+
+        chunks_indexed = self._process_files_cli(
+            vector_store=vector_store,
+            files=files,
+            repository_url=repository_url,
+        )
+
+        meta = {
+            "indexed_at": datetime.now(timezone.utc).isoformat(),
+            "batch_id": batch_id,
+            "commit": manifest.get("commit"),
+            "branch": manifest.get("branch"),
+            "scope": manifest.get("scope"),
+        }
+        self.artifact_store.upload_cli_latest(
+            repository_url, self.db_path, manifest, meta
+        )
+
+        try:
+            os.remove(self.db_path)
+        except OSError:
+            pass
+
+        return IndexResultDto(
+            repository_url=repository_url,
+            commit_sha=commit_ref,
+            is_delta=had_previous,
+            chunks_indexed=chunks_indexed,
+            files_processed=len(files),
+            files_skipped_resume=len(plan.skip),
+        )
+
+    def _process_files_cli(
+        self,
+        vector_store: SqliteVecStoreAdapter,
+        files: list[FileContent],
+        repository_url: str,
+    ) -> int:
+        """Embed files for CLI merge; renew CLI lock, no Git checkpoints."""
+        processed_count = 0
+        total_chunks = 0
+
+        for file in files:
+            self._maybe_renew_cli_lock(repository_url)
+
+            if vector_store.is_file_indexed(file.path):
+                LOGGER.info("Skipping file already indexed: path=%s", file.path)
+                continue
+
+            chunk_iter = self.code_splitter.iter_chunks(file)
+            for chunk_text, embedding in self.embedding_provider.embed_iter(chunk_iter):
+                doc_id = str(uuid.uuid4())
+                vector_store.insert_one(
+                    doc_id=doc_id,
+                    file_path=file.path,
+                    chunk_text=chunk_text,
+                    embedding=embedding,
+                )
+                total_chunks += 1
+
+            vector_store.mark_file_indexed(file.path)
+            processed_count += 1
+
+        return total_chunks
+
+    def _maybe_renew_cli_lock(self, repository_url: str) -> None:
+        if self._lock_acquired_at is None:
+            return
+        now = datetime.now(timezone.utc)
+        if now - self._lock_acquired_at < self._lock_renew_interval:
+            return
+        new_expires = now + timedelta(minutes=self.checkpoint_config.lock_ttl_minutes)
+        renewed = self.artifact_store.renew_cli_lock(
+            repository_url=repository_url,
+            owner=self.job_id,
+            etag=self._current_lock_etag or "",
+            new_expires_at=new_expires.isoformat(),
+        )
+        if not renewed:
+            raise RuntimeError(
+                "CLI lock lost during renewal; aborting run to avoid duplicate embeds"
+            )
+        LOGGER.info("CLI lock renewed new_expires_at=%s", new_expires.isoformat())
+        self._lock_acquired_at = now
+        cli_lock = self.artifact_store.get_cli_lock(repository_url)
+        self._current_lock_etag = cli_lock.get("etag") if cli_lock else None
 
     # ---------- full ----------
 

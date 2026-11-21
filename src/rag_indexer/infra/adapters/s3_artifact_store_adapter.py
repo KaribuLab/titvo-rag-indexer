@@ -496,3 +496,230 @@ class S3ArtifactStoreAdapter(IArtifactStorePort):
             if error_code in ("404", "NoSuchKey"):
                 return None
             raise
+
+    # ---------- CLI index ({repo}/cli/latest/) ----------
+
+    def _build_cli_prefix(self, repository_url: str) -> str:
+        return f"{self._build_repo_path(repository_url)}/cli"
+
+    def _build_cli_lock_key(self, repository_url: str) -> str:
+        return f"{self._build_cli_prefix(repository_url)}/lock.json"
+
+    def upload_cli_latest(
+        self,
+        repository_url: str,
+        db_path: str,
+        manifest: dict,
+        meta: dict,
+    ) -> None:
+        bucket = self._get_bucket_name()
+        prefix = f"{self._build_cli_prefix(repository_url)}/latest"
+        db_key = f"{prefix}/index.db"
+        manifest_key = f"{prefix}/manifest.json"
+        meta_key = f"{prefix}/meta.json"
+
+        LOGGER.info("Uploading CLI index to s3://%s/%s/", bucket, prefix)
+        self.s3_client.upload_file(db_path, bucket, db_key)
+        self.s3_client.put_object(
+            Bucket=bucket,
+            Key=manifest_key,
+            Body=json.dumps(manifest),
+            ContentType="application/json",
+        )
+        self.s3_client.put_object(
+            Bucket=bucket,
+            Key=meta_key,
+            Body=json.dumps(meta),
+            ContentType="application/json",
+        )
+        LOGGER.info(
+            "Successfully uploaded CLI latest for %s",
+            repository_url,
+        )
+
+    def download_cli_latest_db(
+        self,
+        repository_url: str,
+        target_path: str,
+    ) -> Optional[str]:
+        bucket = self._get_bucket_name()
+        key = f"{self._build_cli_prefix(repository_url)}/latest/index.db"
+        try:
+            LOGGER.info("Downloading CLI DB s3://%s/%s to %s", bucket, key, target_path)
+            self.s3_client.download_file(bucket, key, target_path)
+            return target_path
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("404", "NoSuchKey"):
+                LOGGER.debug("CLI latest DB not found for %s", repository_url)
+                return None
+            LOGGER.error("Error downloading CLI DB: %s", e)
+            raise
+
+    def get_cli_latest_manifest(self, repository_url: str) -> Optional[dict]:
+        return self._get_cli_json(repository_url, "latest/manifest.json")
+
+    def get_cli_latest_meta(self, repository_url: str) -> Optional[dict]:
+        return self._get_cli_json(repository_url, "latest/meta.json")
+
+    def _get_cli_json(self, repository_url: str, relative: str) -> Optional[dict]:
+        bucket = self._get_bucket_name()
+        key = f"{self._build_cli_prefix(repository_url)}/{relative}"
+        try:
+            response = self.s3_client.get_object(Bucket=bucket, Key=key)
+            return json.loads(response["Body"].read())
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("404", "NoSuchKey"):
+                return None
+            raise
+
+    def acquire_cli_lock(
+        self,
+        repository_url: str,
+        owner: str,
+        ttl_minutes: int,
+        batch_id: str = "",
+        aws_batch_job_id: Optional[str] = None,
+    ) -> bool:
+        bucket = self._get_bucket_name()
+        key = self._build_cli_lock_key(repository_url)
+
+        now = datetime.now(timezone.utc)
+        expires = now + timedelta(minutes=ttl_minutes)
+        body = {
+            "owner": owner,
+            "aws_batch_job_id": aws_batch_job_id,
+            "acquired_at": now.isoformat(),
+            "expires_at": expires.isoformat(),
+            "batch_id": batch_id,
+        }
+
+        try:
+            self.s3_client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=json.dumps(body),
+                ContentType="application/json",
+                IfNoneMatch="*",
+            )
+            LOGGER.info(
+                "CLI lock acquired owner=%s key=%s expires_at=%s batch_id=%s",
+                owner,
+                key,
+                expires.isoformat(),
+                batch_id,
+            )
+            return True
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            status_code = e.response.get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if error_code == "PreconditionFailed" or status_code == 412:
+                LOGGER.info("CLI lock already exists at s3://%s/%s", bucket, key)
+                return False
+            LOGGER.error("Error acquiring CLI lock: %s", e)
+            raise
+
+    def release_cli_lock(self, repository_url: str, owner: str) -> bool:
+        bucket = self._get_bucket_name()
+        key = self._build_cli_lock_key(repository_url)
+
+        try:
+            head = self.s3_client.head_object(Bucket=bucket, Key=key)
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("404", "NoSuchKey"):
+                LOGGER.debug("CLI lock not found at s3://%s/%s", bucket, key)
+                return False
+            raise
+
+        etag = head.get("ETag", "")
+        body_resp = self.s3_client.get_object(Bucket=bucket, Key=key)
+        body = json.loads(body_resp["Body"].read())
+        if body.get("owner") != owner:
+            LOGGER.warning(
+                "CLI lock release refused: owner mismatch (current=%s, caller=%s)",
+                body.get("owner"),
+                owner,
+            )
+            return False
+
+        try:
+            self.s3_client.delete_object(Bucket=bucket, Key=key, IfMatch=etag)
+            LOGGER.info("CLI lock released owner=%s key=%s", owner, key)
+            return True
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code == "PreconditionFailed":
+                LOGGER.warning("CLI lock release lost race: etag changed")
+                return False
+            raise
+
+    def renew_cli_lock(
+        self,
+        repository_url: str,
+        owner: str,
+        etag: str,
+        new_expires_at: str,
+    ) -> bool:
+        bucket = self._get_bucket_name()
+        key = self._build_cli_lock_key(repository_url)
+
+        try:
+            body_resp = self.s3_client.get_object(Bucket=bucket, Key=key)
+            body = json.loads(body_resp["Body"].read())
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("404", "NoSuchKey"):
+                LOGGER.warning("CLI lock gone at s3://%s/%s", bucket, key)
+                return False
+            raise
+
+        if body.get("owner") != owner:
+            LOGGER.error(
+                "CLI lock renewal refused: owner changed (current=%s, caller=%s)",
+                body.get("owner"),
+                owner,
+            )
+            return False
+
+        body["expires_at"] = new_expires_at
+        try:
+            self.s3_client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=json.dumps(body),
+                ContentType="application/json",
+                IfMatch=etag,
+            )
+            LOGGER.info(
+                "CLI lock renewed owner=%s new_expires_at=%s", owner, new_expires_at
+            )
+            return True
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code == "PreconditionFailed":
+                LOGGER.error("CLI lock renewal lost race: etag changed")
+                return False
+            raise
+
+    def get_cli_lock(self, repository_url: str) -> Optional[dict]:
+        bucket = self._get_bucket_name()
+        key = self._build_cli_lock_key(repository_url)
+        try:
+            resp = self.s3_client.get_object(Bucket=bucket, Key=key)
+            etag = resp.get("ETag", "")
+            body = json.loads(resp["Body"].read())
+            return {
+                "owner": body.get("owner"),
+                "aws_batch_job_id": body.get("aws_batch_job_id"),
+                "acquired_at": body.get("acquired_at"),
+                "expires_at": body.get("expires_at"),
+                "batch_id": body.get("batch_id"),
+                "etag": etag,
+            }
+        except botocore.exceptions.ClientError as e:
+            error_code = e.response.get("Error", {}).get("Code", "Unknown")
+            if error_code in ("404", "NoSuchKey"):
+                return None
+            raise
