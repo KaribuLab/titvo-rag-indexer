@@ -38,6 +38,8 @@ dependency parameters {
       "/tvo/security-scan/prod/infra/secret/manager/arn"           = "arn:aws:secretsmanager:us-east-1:000000000000:secret:/tvo/security-scan/prod"
       "/tvo/security-scan/test/infra/s3/rag-index/bucket_arn"       = "arn:aws:s3:::tvo-rag-index-test-us-east-1"
       "/tvo/security-scan/prod/infra/s3/rag-index/bucket_arn"      = "arn:aws:s3:::tvo-rag-index-prod-us-east-1"
+      "/tvo/security-scan/test/infra/s3/cli-files/bucket_arn"      = "arn:aws:s3:::tvo-security-scan-cli-files-test"
+      "/tvo/security-scan/prod/infra/s3/cli-files/bucket_arn"      = "arn:aws:s3:::tvo-security-scan-cli-files-prod"
     }
   }
 }
@@ -104,6 +106,18 @@ inputs = {
         "Resource" : [
           dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"],
           "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/rag-index/bucket_arn"]}/*"
+        ]
+      },
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "s3:GetObject",
+          "s3:GetObjectVersion",
+          "s3:ListBucket"
+        ],
+        "Resource" : [
+          dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_arn"],
+          "${dependency.parameters.outputs.parameters["${local.base_path}/infra/s3/cli-files/bucket_arn"]}/*"
         ]
       }
     ]
