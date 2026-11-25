@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from rag_indexer.application.cli_manifest_merge import plan_cli_merge
+from rag_indexer.application.cli_manifest_merge import is_root_policy_path, plan_cli_merge
 from rag_indexer.domain.dto.checkpoint_config_dto import CheckpointConfig
 from rag_indexer.domain.dto.file_content_dto import FileContent
 from rag_indexer.domain.dto.index_result_dto import IndexResultDto
@@ -143,6 +143,8 @@ class IndexRepositoryUseCase:
                 )
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Failed to release lock: %s", exc)
+            finally:
+                self._lock_acquired_at = None
 
     # ---------- CLI (S3 snapshot, no Git) ----------
 
@@ -196,6 +198,8 @@ class IndexRepositoryUseCase:
                 self.artifact_store.release_cli_lock(repository_url, self.job_id)
             except Exception as exc:  # noqa: BLE001
                 LOGGER.warning("Failed to release CLI lock: %s", exc)
+            finally:
+                self._lock_acquired_at = None
 
     def _acquire_cli_lock_with_wait(
         self,
@@ -260,14 +264,19 @@ class IndexRepositoryUseCase:
         provider,
     ) -> IndexResultDto:
         manifest = provider.scan_manifest
-        new_files = manifest.get("files") or []
+        # scan_manifest has already validated the entire transport, including
+        # policy bytes. Keep that inventory intact; publish a separate source view.
+        new_files = [item for item in (manifest.get("files") or [])
+                     if not is_root_policy_path(item["path"])]
+        source_manifest = {**manifest, "files": new_files}
         previous = self.artifact_store.get_cli_latest_manifest(repository_url)
         prev_files = (previous or {}).get("files") if previous else None
         plan = plan_cli_merge(prev_files, new_files)
 
         commit_ref = str(manifest.get("commit") or batch_id)
 
-        if plan.inventory_identical and previous is not None:
+        if (plan.inventory_identical and previous is not None
+                and not self._cli_has_legacy_root(repository_url)):
             LOGGER.info(
                 "CLI inventory identical (%d files); no-op merge for %s",
                 len(new_files),
@@ -304,10 +313,16 @@ class IndexRepositoryUseCase:
         vector_store = self._open_db(self.db_path)
 
         # Drop absent paths; clear chunks for paths we will re-embed.
-        to_clear = sorted(plan.drop | (plan.embed & prev_paths))
+        to_clear = sorted(p for p in (plan.drop | (plan.embed & prev_paths))
+                          if not is_root_policy_path(p))
         if to_clear:
+            self._maybe_renew_cli_lock(repository_url)
             vector_store.delete_by_file_paths(to_clear)
 
+        # The old manifest may never have recorded an interrupted root chunk.
+        # Inspect stored data too; root deletion is conditional on DB presence.
+        self._maybe_renew_cli_lock(repository_url)
+        self._remove_root_policy(vector_store)
         files = provider.get_files_for_paths(set(plan.embed))
         LOGGER.info(
             "CLI merge: embed=%d skip=%d drop=%d",
@@ -330,7 +345,7 @@ class IndexRepositoryUseCase:
             "scope": manifest.get("scope"),
         }
         self.artifact_store.upload_cli_latest(
-            repository_url, self.db_path, manifest, meta
+            repository_url, self.db_path, source_manifest, meta
         )
 
         try:
@@ -420,6 +435,7 @@ class IndexRepositoryUseCase:
         # 1. Idempotency: already indexed this exact commit?
         existing_sha = self.artifact_store.get_latest_commit_sha(repository_url, branch)
         if existing_sha == commit_sha:
+            self._clean_latest_root_policy(repository_url, branch, commit_sha)
             LOGGER.info(
                 "Commit %s already indexed for branch %s, skipping",
                 commit_sha[:7],
@@ -503,6 +519,7 @@ class IndexRepositoryUseCase:
                 LOGGER.warning("Could not upload source snapshot: %s", exc)
 
         # 4. Filter out already-indexed and create vector store
+        files = [f for f in files if not is_root_policy_path(f.path)]
         files_to_process = [f for f in files if f.path not in already_indexed]
         files_skipped_resume = len(files) - len(files_to_process)
         LOGGER.info(
@@ -513,6 +530,8 @@ class IndexRepositoryUseCase:
         )
 
         vector_store = self._open_db(self.db_path)
+        self._maybe_renew_lock(repository_url, branch)
+        self._remove_root_policy(vector_store)
         chunks_indexed = self._process_files(
             vector_store=vector_store,
             files=files_to_process,
@@ -570,6 +589,7 @@ class IndexRepositoryUseCase:
             )
 
         if prev_sha == commit_sha:
+            self._clean_latest_root_policy(repository_url, branch, commit_sha)
             LOGGER.info(
                 "Commit %s already indexed as latest for branch %s, skipping",
                 commit_sha[:7],
@@ -601,7 +621,21 @@ class IndexRepositoryUseCase:
             repository_url, prev_sha, commit_sha
         )
 
-        if not diff.added and not diff.modified and not diff.deleted:
+        added = [p for p in diff.added if not is_root_policy_path(p)]
+        modified = [p for p in diff.modified if not is_root_policy_path(p)]
+        deleted = [p for p in diff.deleted if not is_root_policy_path(p)]
+        # Resolve source input before any cleanup or vector changes.
+        files_to_fetch = set(added + modified)
+        all_files = (self.repository_provider.get_files(repository_url, commit_sha)
+                     if files_to_fetch else [])
+        files = [f for f in all_files
+                 if f.path in files_to_fetch and not is_root_policy_path(f.path)]
+        self._maybe_renew_lock(repository_url, branch)
+        removed_policy = self._remove_root_policy(vector_store)
+
+        if not added and not modified and not deleted:
+            if removed_policy:
+                self.artifact_store.upload_db(repository_url, branch, commit_sha, self.db_path)
             LOGGER.info(
                 "No changes detected between %s..%s",
                 prev_sha[:7],
@@ -624,13 +658,9 @@ class IndexRepositoryUseCase:
             len(diff.deleted),
         )
 
-        files_to_delete = diff.modified + diff.deleted
+        files_to_delete = modified + deleted
         if files_to_delete:
             vector_store.delete_by_file_paths(files_to_delete)
-
-        all_files = self.repository_provider.get_files(repository_url, commit_sha)
-        files_to_fetch = set(diff.added + diff.modified)
-        files = [f for f in all_files if f.path in files_to_fetch]
 
         LOGGER.info("Processing %d files from delta", len(files))
 
@@ -660,6 +690,53 @@ class IndexRepositoryUseCase:
         )
 
     # ---------- shared ----------
+
+    def _cli_has_legacy_root(self, repository_url: str) -> bool:
+        # A source-only manifest is not proof of a source-only DB: an older
+        # interrupted run may have left chunks without markers or inventory.
+        # Probe read-only, without opening/initializing a writable vector store.
+        with tempfile.TemporaryDirectory(prefix="rag-cli-policy-probe-") as scratch:
+            path = os.path.join(scratch, "index.db")
+            if not self.artifact_store.download_cli_latest_db(repository_url, path):
+                return False
+            return bool(SqliteVecStoreAdapter.stored_file_paths_at(
+                path, [".titvoignore.yml"],
+            ))
+
+    @staticmethod
+    def _remove_root_policy(vector_store: SqliteVecStoreAdapter) -> bool:
+        paths = sorted(
+            {p for p in vector_store.indexed_files_set() if is_root_policy_path(p)}
+            | set(vector_store.stored_file_paths([".titvoignore.yml"]))
+        )
+        if not paths:
+            return False
+        # Existing deletion also removes resume markers, not just chunks.
+        vector_store.delete_by_file_paths(paths)
+        return True
+
+    def _clean_latest_root_policy(
+        self, repository_url: str, branch: str, commit_sha: str,
+    ) -> None:
+        # Public execute owns the branch lock; private helpers may be called
+        # without it, but must never publish an unlocked migration.
+        if self._lock_acquired_at is None:
+            return
+        downloaded = self.artifact_store.download_latest_db(repository_url, branch)
+        if not downloaded:
+            return
+        try:
+            shutil.copy(downloaded, self.db_path)
+            vector_store = self._open_db(self.db_path)
+            self._maybe_renew_lock(repository_url, branch)
+            if self._remove_root_policy(vector_store):
+                self.artifact_store.upload_db(repository_url, branch, commit_sha, self.db_path)
+        finally:
+            for path in {downloaded, self.db_path}:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
 
     def _open_db(self, db_path: str) -> SqliteVecStoreAdapter:
         return SqliteVecStoreAdapter(
