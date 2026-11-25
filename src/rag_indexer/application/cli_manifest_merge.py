@@ -3,7 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Any, Mapping, Sequence
+
+
+def is_root_policy_path(path: str) -> bool:
+    """Only the repository-root control file, never nested namesakes."""
+    return PurePosixPath(path) == PurePosixPath(".titvoignore.yml")
 
 
 @dataclass(frozen=True)

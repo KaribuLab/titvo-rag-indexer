@@ -176,6 +176,36 @@ class SqliteVecStoreAdapter(IVectorStorePort):
         conn.close()
         return {row[0] for row in rows}
 
+    @staticmethod
+    def stored_file_paths_at(db_path: str, file_paths: list[str]) -> Set[str]:
+        """Read existing chunks/markers without initializing or changing a DB.
+
+        Unlike indexed_files_set, this also sees interrupted, unmarked chunks.
+        The caller supplies the namespace-specific downloaded database.
+        """
+        if not file_paths or not os.path.isfile(db_path):
+            return set()
+        from pathlib import Path
+
+        conn = sqlite3.connect(Path(db_path).resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+            placeholders = ",".join("?" for _ in file_paths)
+            rows = conn.execute(
+                f"SELECT file_path FROM chunks WHERE file_path IN ({placeholders}) "
+                f"UNION SELECT file_path FROM indexed_files WHERE file_path IN ({placeholders})",
+                [*file_paths, *file_paths],
+            ).fetchall()
+            return {row[0] for row in rows}
+        finally:
+            conn.close()
+
+    def stored_file_paths(self, file_paths: list[str]) -> Set[str]:
+        """Return requested paths with any persisted chunks or markers."""
+        return self.stored_file_paths_at(self.db_path, file_paths)
+
     def delete_by_file_paths(self, file_paths: list[str]) -> None:
         """Delete chunks and indexed_files rows for the given paths."""
         if not file_paths:

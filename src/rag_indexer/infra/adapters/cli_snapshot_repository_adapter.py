@@ -12,6 +12,7 @@ from typing import Any, Optional, Set
 
 import botocore.exceptions
 
+from rag_indexer.application.cli_manifest_merge import is_root_policy_path
 from rag_indexer.domain.dto.diff_result_dto import DiffResult
 from rag_indexer.domain.dto.file_content_dto import FileContent
 from rag_indexer.domain.ports.repository_provider import IRepositoryProvider
@@ -170,7 +171,7 @@ class CliSnapshotRepositoryAdapter(IRepositoryProvider):
         exclude = exclude_paths or set()
         result: list[FileContent] = []
         for path in sorted(self._entries):
-            if path in exclude:
+            if path in exclude or is_root_policy_path(path):
                 continue
             data = self._entries[path]
             if b"\x00" in data:

@@ -10,6 +10,7 @@ from pathlib import Path, PurePosixPath
 from typing import Optional, Protocol, Set
 from urllib.parse import urlsplit
 
+from rag_indexer.application.cli_manifest_merge import is_root_policy_path
 from rag_indexer.domain.dto.diff_result_dto import DiffResult
 from rag_indexer.domain.dto.file_content_dto import FileContent
 from rag_indexer.domain.ports.repository_provider import IRepositoryProvider
@@ -431,6 +432,8 @@ class SshGitRepositoryAdapter(IRepositoryProvider):
     @staticmethod
     def _is_excluded(path: str) -> bool:
         pure_path = PurePosixPath(path)
+        if is_root_policy_path(path):
+            return True
         if any(part in _EXCLUDED_DIRS for part in pure_path.parts):
             return True
         return pure_path.suffix.lower() in _EXCLUDED_EXTENSIONS

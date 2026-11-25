@@ -4,6 +4,23 @@ Servicio de indexación RAG (Retrieval-Augmented Generation) de repositorios de 
 
 Se ejecuta como tarea de AWS Batch a demanda, recibiendo la URL del repositorio (GitHub o Bitbucket, HTTPS o SSH) a través de variables de entorno. Las fuentes se obtienen exclusivamente mediante Git sobre SSH; no existe fallback por API.
 
+## Política raíz y fuentes RAG
+
+`.titvoignore.yml` en la raíz es un archivo de control, no una fuente RAG:
+no se materializa para chunking ni se envía a embeddings. Los archivos homónimos
+anidados (por ejemplo `config/.titvoignore.yml`) siguen siendo fuentes normales.
+En snapshots CLI se valida primero el archivo completo contra el manifiesto,
+incluidos hash SHA-256 y tamaño de la política; el manifiesto de transporte no
+se modifica. El inventario publicado del índice contiene solo fuentes.
+
+Las próximas indexaciones eliminan las entradas antiguas de la política raíz en
+su propio índice, bajo el lock existente (CLI o repositorio/branch), incluso si
+las fuentes no cambiaron o se reanuda un checkpoint. También se detectan chunks
+incompletos sin marcador de finalización ni entrada de inventario: la comprobación
+del índice existente es de solo lectura y no publica cambios si no hay política
+raíz que retirar. No se eliminan fuentes anidadas ni entradas de otros índices. Este cambio no despliega el servicio ni
+modifica índices existentes fuera de una futura ejecución de indexación.
+
 ## Variables de entorno
 
 | Variable | Descripción | Requerida | Default |
