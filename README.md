@@ -12,7 +12,7 @@ Se ejecuta como tarea de AWS Batch a demanda, recibiendo la URL del repositorio 
 | `TITVO_DYNAMO_CONFIGURATION_TABLE_NAME` | Tabla DynamoDB de configuración | Sí | — |
 | `TITVO_ENCRYPTION_KEY_NAME` | Nombre del secreto en Secrets Manager | Sí | — |
 | `TITVO_LOG_LEVEL` | Nivel de log (default: `INFO`) | No | `INFO` |
-| `AWS_ENDPOINT` | Endpoint de LocalStack para desarrollo local | No | — |
+| `AWS_ENDPOINT` | Endpoint de MiniStack para desarrollo local | No | — |
 | `TITVO_CHECKPOINT_EVERY_N_FILES` | Cada cuántos archivos procesados se sube un checkpoint DB a S3 | No | `100` |
 | `TITVO_CHECKPOINT_KEY` | Template S3 key para checkpoint; placeholders `{repo_host}`, `{owner}`, `{repo}`, `{branch}`, `{commit_sha}` | No | (default template) |
 | `TITVO_MAX_SNAPSHOT_MB` | Tamaño máximo permitido para el tarball del snapshot del `.git` antes de abortar | No | `200` |
